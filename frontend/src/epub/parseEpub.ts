@@ -26,7 +26,7 @@ export async function parseEpub(file: File) {
 
     // ✅ 封面
     const coverHref = findCoverHref(opfDoc);
-    const coverUrl = coverHref
+    const coverBlob = coverHref
         ? await extractCover(zip, basePath, coverHref)
         : null;
 
@@ -35,7 +35,7 @@ export async function parseEpub(file: File) {
     return {
         id: crypto.randomUUID(),
         title,
-        coverUrl,       // ⭐ 新增
+        coverBlob,
 
         // spine,
         // chapters,
@@ -81,10 +81,9 @@ async function extractCover(
     zip: JSZip,
     basePath: string,
     coverHref: string
-): Promise<string | null> {
+): Promise<Blob | null> {
     const file = zip.file(basePath + coverHref);
     if (!file) return null;
 
-    const blob = await file.async('blob');
-    return URL.createObjectURL(blob);
+    return await file.async('blob');
 }

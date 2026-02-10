@@ -1,15 +1,19 @@
 <script lang="ts">
+    import { createEventDispatcher } from 'svelte';
     import { parseEpub } from '../epub/parseEpub';
     import { saveBook } from '../db/books';
 
-    async function onChange(e) {
-        const file = e.target.files[0];
+    const dispatch = createEventDispatcher<{ uploaded: { id: string } }>();
+
+    async function onChange(e: Event) {
+        const input = e.target as HTMLInputElement;
+        const file = input.files?.[0];
         if (!file) return;
 
         const book = await parseEpub(file);
         await saveBook(book);
 
-        dispatchEvent(new CustomEvent('uploaded', { detail: book }));
+        dispatch('uploaded', { id: book.id });
     }
 </script>
 
