@@ -19,5 +19,7 @@
 {#if currentPage === 'shelf'}
     <Bookshelf on:openBook={(e) => openBook(e.detail)} />
 {:else}
-    <Reader {currentBookId} on:back={backToShelf} />
+    {#if currentBookId}
+        <Reader {currentBookId} on:back={backToShelf} />
+    {/if}
 {/if}
