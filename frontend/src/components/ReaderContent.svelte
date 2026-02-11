@@ -2,26 +2,29 @@
     export let loading = false;
     export let error: string | null = null;
     export let chapterHtml = '';
+    export let chapterRenderId = 0;
     export let coverFallbackUrl: string | null = null;
     export let resolveAssetUrl: (relativePath: string) => Promise<string | null>;
 
     let contentEl: HTMLDivElement | null = null;
     let renderedHtml = '';
     let processingToken = 0;
+    let lastProcessedId = -1;
 
     $: if (contentEl) {
         contentEl.scrollTop = 0;
     }
 
-    $: {
+    $: if (chapterRenderId !== lastProcessedId) {
+        lastProcessedId = chapterRenderId;
         void preprocessChapterHtml();
     }
 
     async function preprocessChapterHtml() {
         const token = ++processingToken;
 
-        if (!chapterHtml || loading || error) {
-            renderedHtml = '';
+        if (!chapterHtml || error) {
+            renderedHtml = chapterHtml || '';
             return;
         }
 

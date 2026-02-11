@@ -17,6 +17,7 @@
     let chapterHtml = '';
     let chapterBasePath = '';
     let coverFallbackUrl: string | null = null;
+    let chapterRenderId = 0;
     let currentIndex = 0;
     let tocCollapsed = false;
     let chapterResourceUrls: string[] = [];
@@ -82,6 +83,7 @@
             }
 
             currentIndex = index;
+            chapterRenderId += 1;
         } catch (err) {
             console.error(err);
             error = 'Failed to load chapter content.';
@@ -212,6 +214,7 @@
                 {loading}
                 {error}
                 chapterHtml={chapterHtml}
+                chapterRenderId={chapterRenderId}
                 coverFallbackUrl={coverFallbackUrl}
                 resolveAssetUrl={resolveChapterAssetUrl}
             />
