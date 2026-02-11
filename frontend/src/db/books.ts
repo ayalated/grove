@@ -4,6 +4,11 @@ export type StoredBook = {
     id: string;
     title: string;
     coverBlob?: Blob | null;
+    chapters?: Array<{
+        id: string;
+        title: string;
+        html: string;
+    }>;
     isVertical?: boolean;
     createdAt: number;
 };
