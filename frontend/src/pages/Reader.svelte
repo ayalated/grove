@@ -15,6 +15,8 @@
     let loading = true;
     let error: string | null = null;
     let chapterHtml = '';
+    let chapterBasePath = '';
+    let coverFallbackUrl: string | null = null;
     let currentIndex = 0;
     let tocCollapsed = false;
     let chapterResourceUrls: string[] = [];
@@ -68,11 +70,17 @@
                 return;
             }
 
-            const rawHtml = await chapterFile.async('string');
-            const { html, urls } = await normalizeChapterHtml(rawHtml, chapterPath, index);
             revokeChapterResourceUrls();
-            chapterResourceUrls = urls;
-            chapterHtml = html;
+
+            chapterHtml = await chapterFile.async('string');
+            chapterBasePath = chapterPath.substring(0, chapterPath.lastIndexOf('/') + 1);
+
+            coverFallbackUrl = null;
+            if (index === 0 && book.coverBlob) {
+                coverFallbackUrl = URL.createObjectURL(book.coverBlob);
+                chapterResourceUrls.push(coverFallbackUrl);
+            }
+
             currentIndex = index;
         } catch (err) {
             console.error(err);
@@ -156,49 +164,21 @@
         return normalized.join('/');
     }
 
-    async function normalizeChapterHtml(
-        rawHtml: string,
-        chapterPath: string,
-        chapterIndex: number
-    ): Promise<{ html: string; urls: string[] }> {
-        if (!book || !zipArchive) {
-            return { html: rawHtml, urls: [] };
+    async function resolveChapterAssetUrl(relativePath: string): Promise<string | null> {
+        if (!zipArchive || !chapterBasePath) {
+            return null;
         }
 
-        const resourceUrls: string[] = [];
-        const parser = new DOMParser();
-        const doc = parser.parseFromString(rawHtml, 'text/html');
-        const chapterBasePath = chapterPath.substring(0, chapterPath.lastIndexOf('/') + 1);
-
-        const images = Array.from(doc.querySelectorAll('img[src]'));
-        for (const image of images) {
-            const src = image.getAttribute('src');
-            if (!src || isAbsoluteUrl(src)) continue;
-
-            const assetPath = resolvePath(chapterBasePath, src);
-            const assetFile = zipArchive.file(assetPath);
-            if (!assetFile) continue;
-
-            const assetBlob = await assetFile.async('blob');
-            const assetUrl = URL.createObjectURL(assetBlob);
-            resourceUrls.push(assetUrl);
-            image.setAttribute('src', assetUrl);
+        const assetPath = resolvePath(chapterBasePath, relativePath);
+        const assetFile = zipArchive.file(assetPath);
+        if (!assetFile) {
+            return null;
         }
 
-        if (chapterIndex === 0 && images.length === 0 && book.coverBlob) {
-            const coverUrl = URL.createObjectURL(book.coverBlob);
-            resourceUrls.push(coverUrl);
-
-            const coverImage = doc.createElement('img');
-            coverImage.setAttribute('src', coverUrl);
-            coverImage.setAttribute('alt', 'Book cover');
-            coverImage.style.display = 'block';
-            coverImage.style.margin = '0 auto 24px';
-            coverImage.style.maxWidth = '100%';
-            doc.body.prepend(coverImage);
-        }
-
-        return { html: doc.body.innerHTML, urls: resourceUrls };
+        const assetBlob = await assetFile.async('blob');
+        const assetUrl = URL.createObjectURL(assetBlob);
+        chapterResourceUrls.push(assetUrl);
+        return assetUrl;
     }
 
     function revokeChapterResourceUrls() {
@@ -208,9 +188,6 @@
         chapterResourceUrls = [];
     }
 
-    function isAbsoluteUrl(url: string): boolean {
-        return /^(data:|blob:|https?:|\/)/i.test(url);
-    }
 </script>
 
 <div class="reader-page">
@@ -231,7 +208,13 @@
         {/if}
 
         <div class="reader-main">
-            <ReaderContent {loading} {error} chapterHtml={chapterHtml} />
+            <ReaderContent
+                {loading}
+                {error}
+                chapterHtml={chapterHtml}
+                coverFallbackUrl={coverFallbackUrl}
+                resolveAssetUrl={resolveChapterAssetUrl}
+            />
         </div>
     </div>
 
