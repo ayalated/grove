@@ -22,10 +22,24 @@
 
 <style>
     .reader-content {
+        --reader-bg-color: #fafafa;
+        --reader-text-color: #1f2937;
+        --reader-link-color: #1d4ed8;
+
         height: 100%;
         overflow: auto;
         padding: 16px;
         box-sizing: border-box;
-        background: #fafafa;
+        background: var(--reader-bg-color);
+        color: var(--reader-text-color);
+    }
+
+    .reader-content :global(article),
+    .reader-content :global(article *) {
+        color: var(--reader-text-color) !important;
+    }
+
+    .reader-content :global(article a) {
+        color: var(--reader-link-color) !important;
     }
 </style>

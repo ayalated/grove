@@ -1,6 +1,6 @@
 <script lang="ts">
     import JSZip from 'jszip';
-    import { createEventDispatcher, onMount } from 'svelte';
+    import { createEventDispatcher, onDestroy, onMount } from 'svelte';
     import { getBook, type StoredBook } from '../db/books';
     import TocPanel from '../components/TocPanel.svelte';
     import ReaderContent from '../components/ReaderContent.svelte';
@@ -17,9 +17,14 @@
     let chapterHtml = '';
     let currentIndex = 0;
     let tocCollapsed = false;
+    let chapterResourceUrls: string[] = [];
 
     onMount(() => {
         void initReader();
+    });
+
+    onDestroy(() => {
+        revokeChapterResourceUrls();
     });
 
     async function initReader() {
@@ -63,7 +68,11 @@
                 return;
             }
 
-            chapterHtml = await chapterFile.async('string');
+            const rawHtml = await chapterFile.async('string');
+            const { html, urls } = await normalizeChapterHtml(rawHtml, chapterPath, index);
+            revokeChapterResourceUrls();
+            chapterResourceUrls = urls;
+            chapterHtml = html;
             currentIndex = index;
         } catch (err) {
             console.error(err);
@@ -145,6 +154,62 @@
         }
 
         return normalized.join('/');
+    }
+
+    async function normalizeChapterHtml(
+        rawHtml: string,
+        chapterPath: string,
+        chapterIndex: number
+    ): Promise<{ html: string; urls: string[] }> {
+        if (!book || !zipArchive) {
+            return { html: rawHtml, urls: [] };
+        }
+
+        const resourceUrls: string[] = [];
+        const parser = new DOMParser();
+        const doc = parser.parseFromString(rawHtml, 'text/html');
+        const chapterBasePath = chapterPath.substring(0, chapterPath.lastIndexOf('/') + 1);
+
+        const images = Array.from(doc.querySelectorAll('img[src]'));
+        for (const image of images) {
+            const src = image.getAttribute('src');
+            if (!src || isAbsoluteUrl(src)) continue;
+
+            const assetPath = resolvePath(chapterBasePath, src);
+            const assetFile = zipArchive.file(assetPath);
+            if (!assetFile) continue;
+
+            const assetBlob = await assetFile.async('blob');
+            const assetUrl = URL.createObjectURL(assetBlob);
+            resourceUrls.push(assetUrl);
+            image.setAttribute('src', assetUrl);
+        }
+
+        if (chapterIndex === 0 && images.length === 0 && book.coverBlob) {
+            const coverUrl = URL.createObjectURL(book.coverBlob);
+            resourceUrls.push(coverUrl);
+
+            const coverImage = doc.createElement('img');
+            coverImage.setAttribute('src', coverUrl);
+            coverImage.setAttribute('alt', 'Book cover');
+            coverImage.style.display = 'block';
+            coverImage.style.margin = '0 auto 24px';
+            coverImage.style.maxWidth = '100%';
+            doc.body.prepend(coverImage);
+        }
+
+        return { html: doc.body.innerHTML, urls: resourceUrls };
+    }
+
+    function revokeChapterResourceUrls() {
+        for (const url of chapterResourceUrls) {
+            URL.revokeObjectURL(url);
+        }
+        chapterResourceUrls = [];
+    }
+
+    function isAbsoluteUrl(url: string): boolean {
+        return /^(data:|blob:|https?:|\/)/i.test(url);
     }
 </script>
 
