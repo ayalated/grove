@@ -1,5 +1,11 @@
 import JSZip from 'jszip';
 
+type ParsedChapter = {
+    id: string;
+    title: string;
+    html: string;
+};
+
 export async function parseEpub(file: File) {
     const buffer = await file.arrayBuffer();
     const zip = await JSZip.loadAsync(buffer);
@@ -26,16 +32,19 @@ export async function parseEpub(file: File) {
 
     // ✅ 封面
     const coverHref = findCoverHref(opfDoc);
-    const coverUrl = coverHref
+    const coverBlob = coverHref
         ? await extractCover(zip, basePath, coverHref)
         : null;
+
+    const chapters = await extractChapters(zip, basePath, opfDoc);
 
     // ……（spine / chapters 和之前一样）
 
     return {
         id: crypto.randomUUID(),
         title,
-        coverUrl,       // ⭐ 新增
+        coverBlob,
+        chapters,
 
         // spine,
         // chapters,
@@ -81,10 +90,75 @@ async function extractCover(
     zip: JSZip,
     basePath: string,
     coverHref: string
-): Promise<string | null> {
+): Promise<Blob | null> {
     const file = zip.file(basePath + coverHref);
     if (!file) return null;
 
-    const blob = await file.async('blob');
-    return URL.createObjectURL(blob);
+    return await file.async('blob');
+}
+
+async function extractChapters(
+    zip: JSZip,
+    basePath: string,
+    opfDoc: Document
+): Promise<ParsedChapter[]> {
+    const manifest = new Map<string, string>();
+    const manifestItems = opfDoc.querySelectorAll('manifest > item');
+
+    manifestItems.forEach((item) => {
+        const id = item.getAttribute('id');
+        const href = item.getAttribute('href');
+        if (id && href) {
+            manifest.set(id, href);
+        }
+    });
+
+    const spineItems = opfDoc.querySelectorAll('spine > itemref');
+    const chapters: ParsedChapter[] = [];
+
+    for (let index = 0; index < spineItems.length; index += 1) {
+        const idref = spineItems[index].getAttribute('idref');
+        if (!idref) continue;
+
+        const href = manifest.get(idref);
+        if (!href) continue;
+
+        const chapterPath = resolvePath(basePath, href);
+        const chapterFile = zip.file(chapterPath);
+        if (!chapterFile) continue;
+
+        const html = await chapterFile.async('string');
+        const title = extractHtmlTitle(html) ?? `Chapter ${index + 1}`;
+
+        chapters.push({
+            id: idref,
+            title,
+            html
+        });
+    }
+
+    return chapters;
+}
+
+function resolvePath(basePath: string, href: string): string {
+    const combined = `${basePath}${href}`;
+    const rawParts = combined.split('/');
+    const normalized: string[] = [];
+
+    for (const part of rawParts) {
+        if (!part || part === '.') continue;
+        if (part === '..') {
+            normalized.pop();
+            continue;
+        }
+        normalized.push(part);
+    }
+
+    return normalized.join('/');
+}
+
+function extractHtmlTitle(html: string): string | null {
+    const doc = new DOMParser().parseFromString(html, 'text/html');
+    const title = doc.querySelector('title')?.textContent?.trim();
+    return title || null;
 }
