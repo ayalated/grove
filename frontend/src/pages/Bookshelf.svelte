@@ -1,25 +1,31 @@
 <script lang="ts">
     import { onMount, createEventDispatcher } from 'svelte';
-    import { getAllBooks, saveBook } from '../db/books';
+    import { getAllBooks, saveBook, type StoredBook } from '../db/books';
     import { parseEpub } from '../epub/parseEpub';
 
-    type Book = {
-        id: string;
-        title: string;
-        isVertical: boolean;
-        createdAt: number;
+    type BookshelfBook = StoredBook & {
+        coverUrl: string | null;
     };
 
     const dispatch = createEventDispatcher();
 
-    let books: Book[] = [];
+    let books: BookshelfBook[] = [];
     let loading = false;
     let error: string | null = null;
 
     // 页面加载时，从 IndexedDB 读取书架
-    onMount(async () => {
-        books = await getAllBooks();
+    onMount(() => {
+        void loadBooks();
+
+        return () => {
+            cleanupCoverUrls(books);
+        };
     });
+
+    async function loadBooks() {
+        const storedBooks = await getAllBooks();
+        books = storedBooks.map(toBookshelfBook);
+    }
 
     async function onFileChange(e: Event) {
         const input = e.target as HTMLInputElement;
@@ -34,7 +40,7 @@
             await saveBook(book);
 
             // 更新书架（新书放在最前面）
-            books = [book, ...books];
+            books = [toBookshelfBook(book), ...books];
         } catch (err) {
             error = 'Failed to load EPUB file.';
             console.error(err);
@@ -44,8 +50,23 @@
         }
     }
 
-    function openBook(book: Book) {
+    function openBook(book: BookshelfBook) {
         dispatch('openBook', book.id);
+    }
+
+    function toBookshelfBook(book: StoredBook): BookshelfBook {
+        return {
+            ...book,
+            coverUrl: book.coverBlob ? URL.createObjectURL(book.coverBlob) : null
+        };
+    }
+
+    function cleanupCoverUrls(targetBooks: BookshelfBook[]) {
+        for (const book of targetBooks) {
+            if (book.coverUrl) {
+                URL.revokeObjectURL(book.coverUrl);
+            }
+        }
     }
 </script>
 
