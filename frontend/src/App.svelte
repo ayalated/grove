@@ -7,7 +7,7 @@
     let currentBookId: string | null = null;
 
     onMount(() => {
-        const bookId = getBookIdFromUrl();
+        const bookId = getBookIdFromPath();
         if (!bookId) return;
 
         currentBookId = bookId;
@@ -15,24 +15,21 @@
     });
 
     function openBook(bookId: string) {
-        const targetUrl = new URL(window.location.href);
-        targetUrl.searchParams.set('bookId', bookId);
-
-        window.open(targetUrl.toString(), '_blank', 'noopener');
+        const targetUrl = `${window.location.origin}/reader/${bookId}`;
+        window.open(targetUrl, '_blank', 'noopener');
     }
 
     function backToShelf() {
         currentPage = 'shelf';
         currentBookId = null;
-
-        const currentUrl = new URL(window.location.href);
-        currentUrl.searchParams.delete('bookId');
-        history.replaceState(null, '', currentUrl.toString());
+        history.replaceState(null, '', '/');
     }
 
-    function getBookIdFromUrl(): string | null {
-        const params = new URLSearchParams(window.location.search);
-        return params.get('bookId');
+    function getBookIdFromPath(): string | null {
+        const match = window.location.pathname.match(/^\/reader\/([^/]+)$/);
+        if (!match) return null;
+
+        return decodeURIComponent(match[1]);
     }
 </script>
 
