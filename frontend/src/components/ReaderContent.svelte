@@ -1,4 +1,5 @@
 <script lang="ts">
+    import JSZip from 'jszip';
     import { onMount } from 'svelte';
     import { getBook, type StoredBook } from '../db/books';
 
@@ -9,10 +10,10 @@
     let currentChapterHtml = '';
 
     onMount(() => {
-        void loadBook();
+        void loadChapterByIndex(0);
     });
 
-    async function loadBook() {
+    async function loadChapterByIndex(chapterIndex: number) {
         loading = true;
         error = null;
 
@@ -23,23 +24,63 @@
                 return;
             }
 
-            const firstChapter = getFirstChapter(book);
-            if (!firstChapter) {
-                error = 'No chapter content found for this book.';
+            const chapterPath = getChapterPath(book, chapterIndex);
+            if (!chapterPath) {
+                error = 'No chapter metadata found for this book.';
                 return;
             }
 
-            currentChapterHtml = firstChapter.html;
+            const zip = await loadZip(book);
+            const chapterFile = zip.file(chapterPath);
+            if (!chapterFile) {
+                error = 'Chapter file not found in EPUB archive.';
+                return;
+            }
+
+            currentChapterHtml = await chapterFile.async('string');
         } catch (err) {
             console.error(err);
-            error = 'Failed to load chapter from IndexedDB.';
+            error = 'Failed to load chapter from IndexedDB blob.';
         } finally {
             loading = false;
         }
     }
 
-    function getFirstChapter(book: StoredBook) {
-        return book.chapters?.[0] ?? null;
+    function getChapterPath(book: StoredBook, chapterIndex: number): string | null {
+        const spineItem = book.spine?.[chapterIndex];
+        if (!spineItem) return null;
+
+        const manifestItem = book.manifest?.find((item) => item.id === spineItem.idref);
+        if (!manifestItem) return null;
+
+        const basePath = getBasePath(book.opfPath);
+        return resolvePath(basePath, manifestItem.href);
+    }
+
+    async function loadZip(book: StoredBook): Promise<JSZip> {
+        const buffer = await book.epubBlob.arrayBuffer();
+        return await JSZip.loadAsync(buffer);
+    }
+
+    function getBasePath(opfPath: string): string {
+        return opfPath.substring(0, opfPath.lastIndexOf('/') + 1);
+    }
+
+    function resolvePath(basePath: string, href: string): string {
+        const combined = `${basePath}${href}`;
+        const rawParts = combined.split('/');
+        const normalized: string[] = [];
+
+        for (const part of rawParts) {
+            if (!part || part === '.') continue;
+            if (part === '..') {
+                normalized.pop();
+                continue;
+            }
+            normalized.push(part);
+        }
+
+        return normalized.join('/');
     }
 </script>
 
