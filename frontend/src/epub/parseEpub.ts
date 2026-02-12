@@ -204,22 +204,26 @@ async function extractNcxToc(
 
     const ncxText = await ncxFile.async('string');
     const ncxDoc = new DOMParser().parseFromString(ncxText, 'application/xml');
-    const navMap = ncxDoc.querySelector('navMap');
+    // NCX files often define a default namespace, so CSS selectors like
+    // querySelector('navPoint') may miss nodes. Use namespace-aware APIs.
+    const navMap = ncxDoc.getElementsByTagNameNS('*', 'navMap')[0];
     if (!navMap) return [];
 
     const dedupe = new Set<number>();
     const rootNavPoints = Array.from(navMap.children).filter(
-        (node): node is Element => node.tagName.toLowerCase() === 'navpoint'
+        (node): node is Element => node.localName === 'navPoint'
     );
 
     // Recursively parse hierarchical NCX navPoint tree.
-    const parseNavPointElement = (el: Element, parentId: string): TocItem | null => {
-        const label = getDirectChild(getDirectChild(el, 'navlabel') ?? el, 'text')?.textContent?.trim() || 'Untitled';
-        const src = getDirectChild(el, 'content')?.getAttribute('src') ?? '';
+    function parseNavPointElement(el: Element, parentId: string): TocItem | null {
+        const labelNode = el.getElementsByTagNameNS('*', 'text')[0];
+        const contentNode = el.getElementsByTagNameNS('*', 'content')[0];
+        const label = labelNode?.textContent?.trim() || 'Untitled';
+        const src = contentNode?.getAttribute('src') || '';
         const href = normalizeNcxHref(src, ncxPath, spineLookup);
 
         const childNodes = Array.from(el.children).filter(
-            (child): child is Element => child.tagName.toLowerCase() === 'navpoint'
+            (child): child is Element => child.localName === 'navPoint'
         );
         const children = childNodes
             .map((child, index) => parseNavPointElement(child, `${parentId}-${index + 1}`))
@@ -241,7 +245,7 @@ async function extractNcxToc(
             href,
             ...(children.length > 0 ? { children } : {})
         };
-    };
+    }
 
     return rootNavPoints
         .map((navPoint, index) => parseNavPointElement(navPoint, `toc-${index + 1}`))
@@ -428,15 +432,6 @@ function dirname(path: string): string {
     const idx = path.lastIndexOf('/');
     if (idx < 0) return '';
     return path.slice(0, idx + 1);
-}
-
-function getDirectChild(node: Element, tagName: string): Element | null {
-    for (const child of Array.from(node.children)) {
-        if (child.tagName.toLowerCase() === tagName) {
-            return child;
-        }
-    }
-    return null;
 }
 
 function resolvePath(basePath: string, href: string): string {
