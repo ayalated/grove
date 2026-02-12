@@ -147,33 +147,42 @@ async function extractToc(
     manifest: ManifestItem[],
     spine: SpineItem[]
 ): Promise<TocItem[]> {
-    // Build lookup once so all TOC strategies (nav / ncx / fallback html) can
-    // map links to canonical spine entries and avoid duplicates.
+    // Priority order:
+    // 1) EPUB3 nav document
+    // 2) EPUB2 toc.ncx
+    // 3) Fallback HTML/XHTML TOC scan
+    // 4) Spine-based generation
     const spineLookup = buildSpineLookup(basePath, manifest, spine);
 
-    const navItem = manifest.find((item) => item.properties?.split(' ').includes('nav'));
-    if (navItem) {
-        const navFilePath = resolvePath(basePath, navItem.href);
-        const navFile = zip.file(navFilePath);
-        if (navFile) {
-            const navHtml = await navFile.async('string');
-            const navDoc = new DOMParser().parseFromString(navHtml, 'text/html');
-
-            const navLinks = Array.from(navDoc.querySelectorAll('nav a[href]'));
-            const normalized = normalizeTocLinks(navLinks, navFilePath, spineLookup);
-            if (normalized.length > 0) {
-                return toStoredToc(normalized);
-            }
-        }
-    }
+    const navToc = await extractNavToc(zip, basePath, manifest, spineLookup);
+    if (navToc.length > 0) return toStoredToc(navToc);
 
     const ncxToc = await extractNcxToc(zip, basePath, manifest, spineLookup);
-    if (ncxToc.length > 0) {
-        return toStoredToc(ncxToc);
-    }
+    if (ncxToc.length > 0) return toStoredToc(ncxToc);
 
-    const fallbackToc = await extractFallbackToc(zip, basePath, manifest, spineLookup);
-    return toStoredToc(fallbackToc);
+    const fallbackToc = await extractFallbackHtmlToc(zip, basePath, manifest, spineLookup);
+    if (fallbackToc.length > 0) return toStoredToc(fallbackToc);
+
+    return generateSpineToc(spine, spineLookup);
+}
+
+async function extractNavToc(
+    zip: JSZip,
+    basePath: string,
+    manifest: ManifestItem[],
+    spineLookup: SpineLookup
+): Promise<NormalizedTocItem[]> {
+    const navItem = manifest.find((item) => item.properties?.split(' ').includes('nav'));
+    if (!navItem) return [];
+
+    const navFilePath = resolvePath(basePath, navItem.href);
+    const navFile = zip.file(navFilePath);
+    if (!navFile) return [];
+
+    const navHtml = await navFile.async('string');
+    const navDoc = new DOMParser().parseFromString(navHtml, 'text/html');
+    const navLinks = Array.from(navDoc.querySelectorAll('nav a[href]'));
+    return normalizeTocLinks(navLinks, navFilePath, spineLookup);
 }
 
 async function extractNcxToc(
@@ -194,36 +203,57 @@ async function extractNcxToc(
 
     const ncxText = await ncxFile.async('string');
     const ncxDoc = new DOMParser().parseFromString(ncxText, 'application/xml');
-    const navPoints = Array.from(ncxDoc.querySelectorAll('navPoint'));
+    const navMap = ncxDoc.querySelector('navMap');
+    if (!navMap) return [];
+
     const tocItems: NormalizedTocItem[] = [];
     const dedupe = new Set<number>();
 
-    for (const navPoint of navPoints) {
-        const src = navPoint.querySelector('content')?.getAttribute('src');
-        if (!src) continue;
+    const rootNavPoints = Array.from(navMap.children).filter(
+        (node): node is Element => node.tagName.toLowerCase() === 'navpoint'
+    );
 
-        const title = navPoint.querySelector('text')?.textContent?.trim() || 'Untitled';
-        const hrefWithoutHash = src.split('#')[0].split('?')[0];
-        const resolvedPath = resolvePath(dirname(ncxPath), hrefWithoutHash);
-        const spineIndex = spineLookup.pathToSpineIndex.get(resolvedPath);
-        if (spineIndex === undefined || dedupe.has(spineIndex)) continue;
+    const walkNavPoints = (points: Element[]) => {
+        for (const navPoint of points) {
+            const contentNode = getDirectChild(navPoint, 'content');
+            const src = contentNode?.getAttribute('src');
+            if (src) {
+                const navLabel = getDirectChild(navPoint, 'navlabel');
+                const textNode = navLabel ? getDirectChild(navLabel, 'text') : null;
+                const title = textNode?.textContent?.trim() || 'Untitled';
+                const hrefWithoutHash = src.split('#')[0].split('?')[0];
+                const resolvedPath = resolvePath(dirname(ncxPath), hrefWithoutHash);
+                const spineIndex = spineLookup.pathToSpineIndex.get(resolvedPath);
 
-        const manifestHref = spineLookup.spineIndexToManifestHref.get(spineIndex);
-        if (!manifestHref) continue;
-        const hash = src.includes('#') ? `#${src.split('#').slice(1).join('#')}` : '';
+                if (spineIndex !== undefined && !dedupe.has(spineIndex)) {
+                    const manifestHref = spineLookup.spineIndexToManifestHref.get(spineIndex);
+                    if (manifestHref) {
+                        const hash = src.includes('#') ? `#${src.split('#').slice(1).join('#')}` : '';
+                        dedupe.add(spineIndex);
+                        tocItems.push({
+                            title,
+                            href: `${manifestHref}${hash}`,
+                            spineIndex
+                        });
+                    }
+                }
+            }
 
-        dedupe.add(spineIndex);
-        tocItems.push({
-            title,
-            href: `${manifestHref}${hash}`,
-            spineIndex
-        });
-    }
+            const children = Array.from(navPoint.children).filter(
+                (node): node is Element => node.tagName.toLowerCase() === 'navpoint'
+            );
+            if (children.length > 0) {
+                walkNavPoints(children);
+            }
+        }
+    };
+
+    walkNavPoints(rootNavPoints);
 
     return tocItems;
 }
 
-async function extractFallbackToc(
+async function extractFallbackHtmlToc(
     zip: JSZip,
     basePath: string,
     manifest: ManifestItem[],
@@ -332,6 +362,21 @@ function toStoredToc(items: NormalizedTocItem[]): TocItem[] {
     }));
 }
 
+function generateSpineToc(spine: SpineItem[], spineLookup: SpineLookup): TocItem[] {
+    return spine
+        .map((spineItem, index) => {
+            const manifestHref = spineLookup.spineIndexToManifestHref.get(index);
+            if (!manifestHref) return null;
+
+            return {
+                id: `chapter-${index + 1}`,
+                label: `Chapter ${index + 1}`,
+                href: manifestHref
+            };
+        })
+        .filter((item): item is TocItem => item !== null);
+}
+
 type SpineLookup = {
     pathToSpineIndex: Map<string, number>;
     spineIndexToManifestHref: Map<number, string>;
@@ -364,6 +409,15 @@ function dirname(path: string): string {
     const idx = path.lastIndexOf('/');
     if (idx < 0) return '';
     return path.slice(0, idx + 1);
+}
+
+function getDirectChild(node: Element, tagName: string): Element | null {
+    for (const child of Array.from(node.children)) {
+        if (child.tagName.toLowerCase() === tagName) {
+            return child;
+        }
+    }
+    return null;
 }
 
 function resolvePath(basePath: string, href: string): string {
