@@ -16,7 +16,9 @@
     let error: string | null = null;
     let chapterHtml = '';
     let chapterBasePath = '';
-    let coverFallbackUrl: string | null = null;
+    let coverPageUrl: string | null = null;
+    let hasCover = false;
+    let showCoverPage = false;
     let chapterRenderId = 0;
     let currentIndex = 0;
     let tocCollapsed = false;
@@ -42,7 +44,8 @@
             }
 
             zipArchive = await loadZip(book);
-            const initialIndex = findInitialIndex(book);
+            hasCover = await shouldShowVirtualCover(book, zipArchive);
+            const initialIndex = hasCover ? 0 : findInitialSpineIndex(book);
             await loadChapter(initialIndex);
         } catch (err) {
             console.error(err);
@@ -55,7 +58,31 @@
     async function loadChapter(index: number) {
         if (!book || !zipArchive) return;
 
-        const chapterPath = getChapterPath(book, index);
+        // Virtual cover page at reader index 0 when cover exists and isn't duplicated by spine[0].
+        if (hasCover && index === 0) {
+            loading = true;
+            error = null;
+            revokeChapterResourceUrls();
+
+            if (!book.coverBlob) {
+                error = 'Cover image is missing.';
+                loading = false;
+                return;
+            }
+
+            coverPageUrl = URL.createObjectURL(book.coverBlob);
+            chapterResourceUrls.push(coverPageUrl);
+            showCoverPage = true;
+            chapterHtml = '';
+            currentIndex = 0;
+            chapterRenderId += 1;
+            loading = false;
+            return;
+        }
+
+        const spineIndex = hasCover ? index - 1 : index;
+
+        const chapterPath = getChapterPath(book, spineIndex);
         if (!chapterPath) {
             error = 'Chapter metadata is missing.';
             return;
@@ -76,11 +103,8 @@
             chapterHtml = await chapterFile.async('string');
             chapterBasePath = chapterPath.substring(0, chapterPath.lastIndexOf('/') + 1);
 
-            coverFallbackUrl = null;
-            if (index === 0 && book.coverBlob) {
-                coverFallbackUrl = URL.createObjectURL(book.coverBlob);
-                chapterResourceUrls.push(coverFallbackUrl);
-            }
+            coverPageUrl = null;
+            showCoverPage = false;
 
             currentIndex = index;
             chapterRenderId += 1;
@@ -92,7 +116,7 @@
         }
     }
 
-    function findInitialIndex(targetBook: StoredBook): number {
+    function findInitialSpineIndex(targetBook: StoredBook): number {
         if (!targetBook.toc || targetBook.toc.length === 0) {
             return 0;
         }
@@ -116,7 +140,8 @@
         if (!tocItem) return;
 
         const spineIndex = getSpineIndexByHref(book, tocItem.href);
-        void loadChapter(spineIndex);
+        const readerIndex = hasCover ? spineIndex + 1 : spineIndex;
+        void loadChapter(readerIndex);
     }
 
     function prevChapter() {
@@ -125,8 +150,12 @@
     }
 
     function nextChapter() {
-        if (!book || currentIndex >= book.spine.length - 1) return;
+        if (!book || currentIndex >= getLastReaderIndex(book)) return;
         void loadChapter(currentIndex + 1);
+    }
+
+    function getLastReaderIndex(targetBook: StoredBook): number {
+        return targetBook.spine.length - 1 + (hasCover ? 1 : 0);
     }
 
     function getChapterPath(targetBook: StoredBook, chapterIndex: number): string | null {
@@ -190,6 +219,31 @@
         chapterResourceUrls = [];
     }
 
+    async function shouldShowVirtualCover(targetBook: StoredBook, zip: JSZip): Promise<boolean> {
+        if (!targetBook.coverBlob) return false;
+
+        const firstSpinePath = getChapterPath(targetBook, 0);
+        if (!firstSpinePath) return true;
+
+        const firstSpineFile = zip.file(firstSpinePath);
+        if (!firstSpineFile) return true;
+
+        const html = await firstSpineFile.async('string');
+        return !isSingleImagePage(html);
+    }
+
+    function isSingleImagePage(html: string): boolean {
+        const doc = new DOMParser().parseFromString(html, 'text/html');
+        const body = doc.body;
+        if (!body) return false;
+
+        const text = body.textContent?.replace(/\s+/g, '') || '';
+        const images = body.querySelectorAll('img');
+        const nonImageElements = body.querySelectorAll('*:not(img):not(style):not(script)');
+
+        return images.length === 1 && text.length === 0 && nonImageElements.length <= 1;
+    }
+
 </script>
 
 <div class="reader-page">
@@ -203,7 +257,7 @@
             <TocPanel
                 items={book.toc}
                 collapsed={tocCollapsed}
-                currentIndex={currentIndex}
+                currentIndex={hasCover ? Math.max(currentIndex - 1, 0) : currentIndex}
                 onToggle={() => (tocCollapsed = !tocCollapsed)}
                 onSelect={onSelectToc}
             />
@@ -215,7 +269,8 @@
                 {error}
                 chapterHtml={chapterHtml}
                 chapterRenderId={chapterRenderId}
-                coverFallbackUrl={coverFallbackUrl}
+                showCoverPage={showCoverPage}
+                coverPageUrl={coverPageUrl}
                 resolveAssetUrl={resolveChapterAssetUrl}
             />
         </div>
@@ -223,7 +278,7 @@
 
     <ChapterNav
         canPrev={currentIndex > 0}
-        canNext={Boolean(book && currentIndex < book.spine.length - 1)}
+        canNext={Boolean(book && currentIndex < getLastReaderIndex(book))}
         onPrev={prevChapter}
         onNext={nextChapter}
     />

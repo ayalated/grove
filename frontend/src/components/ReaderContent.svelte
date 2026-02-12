@@ -3,7 +3,8 @@
     export let error: string | null = null;
     export let chapterHtml = '';
     export let chapterRenderId = 0;
-    export let coverFallbackUrl: string | null = null;
+    export let showCoverPage = false;
+    export let coverPageUrl: string | null = null;
     export let resolveAssetUrl: (relativePath: string) => Promise<string | null>;
 
     let contentEl: HTMLDivElement | null = null;
@@ -23,21 +24,23 @@
     async function preprocessChapterHtml() {
         const token = ++processingToken;
 
+        if (showCoverPage) {
+            renderedHtml = '';
+            return;
+        }
+
         if (!chapterHtml || error) {
             renderedHtml = chapterHtml || '';
             return;
         }
 
         const doc = new DOMParser().parseFromString(chapterHtml, 'text/html');
-        let hasRenderableCover = false;
-
         const imgTags = Array.from(doc.querySelectorAll('img[src]'));
         for (const img of imgTags) {
             const src = img.getAttribute('src');
             if (!src) continue;
 
             if (isAbsoluteUrl(src)) {
-                hasRenderableCover = true;
                 continue;
             }
 
@@ -48,7 +51,6 @@
             }
 
             img.setAttribute('src', resolvedUrl);
-            hasRenderableCover = true;
         }
 
         const svgImageTags = Array.from(doc.querySelectorAll('image'));
@@ -59,7 +61,6 @@
             if (!href) continue;
 
             if (isAbsoluteUrl(href)) {
-                hasRenderableCover = true;
                 continue;
             }
 
@@ -76,17 +77,6 @@
 
             svgImage.setAttribute('href', resolvedUrl);
             svgImage.setAttribute('xlink:href', resolvedUrl);
-            hasRenderableCover = true;
-        }
-
-        if (!hasRenderableCover && coverFallbackUrl) {
-            const coverImage = doc.createElement('img');
-            coverImage.setAttribute('src', coverFallbackUrl);
-            coverImage.setAttribute('alt', 'Book cover');
-            coverImage.style.display = 'block';
-            coverImage.style.margin = '0 auto 24px';
-            coverImage.style.maxWidth = '100%';
-            doc.body.prepend(coverImage);
         }
 
         if (token !== processingToken) {
@@ -106,6 +96,10 @@
         <p>Loading chapter...</p>
     {:else if error}
         <p>{error}</p>
+    {:else if showCoverPage && coverPageUrl}
+        <div class="cover-page">
+            <img src={coverPageUrl} alt="Book cover" />
+        </div>
     {:else}
         <article>{@html renderedHtml}</article>
     {/if}
@@ -133,5 +127,22 @@
 
     .reader-content :global(article a) {
         color: var(--reader-link-color) !important;
+    }
+
+    .cover-page {
+        min-height: 100%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 16px;
+        box-sizing: border-box;
+    }
+
+    .cover-page img {
+        max-width: 100%;
+        max-height: 100vh;
+        width: auto;
+        height: auto;
+        object-fit: contain;
     }
 </style>
