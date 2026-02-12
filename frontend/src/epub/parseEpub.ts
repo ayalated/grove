@@ -18,12 +18,15 @@ type TocItem = {
     href: string;
 };
 
+<<<<<<< codex/investigate-indexeddb-cover-display-issue-u8iiyt
 type NormalizedTocItem = {
     title: string;
     href: string;
     spineIndex: number;
 };
 
+=======
+>>>>>>> master
 export async function parseEpub(file: File) {
     const buffer = await file.arrayBuffer();
     const zip = await JSZip.loadAsync(buffer);
@@ -49,7 +52,11 @@ export async function parseEpub(file: File) {
 
     const manifest = extractManifest(opfDoc);
     const spine = extractSpine(opfDoc);
+<<<<<<< codex/investigate-indexeddb-cover-display-issue-u8iiyt
     const toc = await extractToc(zip, basePath, manifest, spine);
+=======
+    const toc = await extractToc(zip, basePath, manifest);
+>>>>>>> master
 
     return {
         id: crypto.randomUUID(),
@@ -144,6 +151,7 @@ function extractSpine(opfDoc: Document): SpineItem[] {
 async function extractToc(
     zip: JSZip,
     basePath: string,
+<<<<<<< codex/investigate-indexeddb-cover-display-issue-u8iiyt
     manifest: ManifestItem[],
     spine: SpineItem[]
 ): Promise<TocItem[]> {
@@ -343,6 +351,27 @@ function dirname(path: string): string {
     return path.slice(0, idx + 1);
 }
 
+=======
+    manifest: ManifestItem[]
+): Promise<TocItem[]> {
+    const navItem = manifest.find((item) => item.properties?.split(' ').includes('nav'));
+    if (!navItem) return [];
+
+    const navFile = zip.file(resolvePath(basePath, navItem.href));
+    if (!navFile) return [];
+
+    const navHtml = await navFile.async('string');
+    const navDoc = new DOMParser().parseFromString(navHtml, 'text/html');
+
+    const links = Array.from(navDoc.querySelectorAll('nav a[href]'));
+    return links.map((link, index) => ({
+        id: `toc-${index + 1}`,
+        label: link.textContent?.trim() || `Chapter ${index + 1}`,
+        href: link.getAttribute('href') || ''
+    }));
+}
+
+>>>>>>> master
 function resolvePath(basePath: string, href: string): string {
     const combined = `${basePath}${href}`;
     const rawParts = combined.split('/');
