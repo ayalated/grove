@@ -16,6 +16,7 @@ type TocItem = {
     id: string;
     label: string;
     href: string;
+    children?: TocItem[];
 };
 
 type NormalizedTocItem = {
@@ -158,7 +159,7 @@ async function extractToc(
     if (navToc.length > 0) return toStoredToc(navToc);
 
     const ncxToc = await extractNcxToc(zip, basePath, manifest, spineLookup);
-    if (ncxToc.length > 0) return toStoredToc(ncxToc);
+    if (ncxToc.length > 0) return ncxToc;
 
     const fallbackToc = await extractFallbackHtmlToc(zip, basePath, manifest, spineLookup);
     if (fallbackToc.length > 0) return toStoredToc(fallbackToc);
@@ -190,7 +191,7 @@ async function extractNcxToc(
     basePath: string,
     manifest: ManifestItem[],
     spineLookup: SpineLookup
-): Promise<NormalizedTocItem[]> {
+): Promise<TocItem[]> {
     const ncxItem = manifest.find((item) =>
         item.mediaType === 'application/x-dtbncx+xml' ||
         item.href.toLowerCase().endsWith('.ncx')
@@ -206,51 +207,45 @@ async function extractNcxToc(
     const navMap = ncxDoc.querySelector('navMap');
     if (!navMap) return [];
 
-    const tocItems: NormalizedTocItem[] = [];
     const dedupe = new Set<number>();
-
     const rootNavPoints = Array.from(navMap.children).filter(
         (node): node is Element => node.tagName.toLowerCase() === 'navpoint'
     );
 
-    const walkNavPoints = (points: Element[]) => {
-        for (const navPoint of points) {
-            const contentNode = getDirectChild(navPoint, 'content');
-            const src = contentNode?.getAttribute('src');
-            if (src) {
-                const navLabel = getDirectChild(navPoint, 'navlabel');
-                const textNode = navLabel ? getDirectChild(navLabel, 'text') : null;
-                const title = textNode?.textContent?.trim() || 'Untitled';
-                const hrefWithoutHash = src.split('#')[0].split('?')[0];
-                const resolvedPath = resolvePath(dirname(ncxPath), hrefWithoutHash);
-                const spineIndex = spineLookup.pathToSpineIndex.get(resolvedPath);
+    // Recursively parse hierarchical NCX navPoint tree.
+    const parseNavPointElement = (el: Element, parentId: string): TocItem | null => {
+        const label = getDirectChild(getDirectChild(el, 'navlabel') ?? el, 'text')?.textContent?.trim() || 'Untitled';
+        const src = getDirectChild(el, 'content')?.getAttribute('src') ?? '';
+        const href = normalizeNcxHref(src, ncxPath, spineLookup);
 
-                if (spineIndex !== undefined && !dedupe.has(spineIndex)) {
-                    const manifestHref = spineLookup.spineIndexToManifestHref.get(spineIndex);
-                    if (manifestHref) {
-                        const hash = src.includes('#') ? `#${src.split('#').slice(1).join('#')}` : '';
-                        dedupe.add(spineIndex);
-                        tocItems.push({
-                            title,
-                            href: `${manifestHref}${hash}`,
-                            spineIndex
-                        });
-                    }
-                }
-            }
+        const childNodes = Array.from(el.children).filter(
+            (child): child is Element => child.tagName.toLowerCase() === 'navpoint'
+        );
+        const children = childNodes
+            .map((child, index) => parseNavPointElement(child, `${parentId}-${index + 1}`))
+            .filter((item): item is TocItem => item !== null);
 
-            const children = Array.from(navPoint.children).filter(
-                (node): node is Element => node.tagName.toLowerCase() === 'navpoint'
-            );
-            if (children.length > 0) {
-                walkNavPoints(children);
+        if (!href && children.length === 0) return null;
+
+        const spineIndex = href ? getSpineIndexByNormalizedHref(href, spineLookup) : undefined;
+        if (spineIndex !== undefined) {
+            if (dedupe.has(spineIndex) && children.length === 0) {
+                return null;
             }
+            dedupe.add(spineIndex);
         }
+
+        return {
+            id: parentId,
+            label,
+            href,
+            ...(children.length > 0 ? { children } : {})
+        };
     };
 
-    walkNavPoints(rootNavPoints);
-
-    return tocItems;
+    return rootNavPoints
+        .map((navPoint, index) => parseNavPointElement(navPoint, `toc-${index + 1}`))
+        .filter((item): item is TocItem => item !== null);
 }
 
 async function extractFallbackHtmlToc(
@@ -360,6 +355,30 @@ function toStoredToc(items: NormalizedTocItem[]): TocItem[] {
         label: item.title,
         href: item.href
     }));
+}
+
+function normalizeNcxHref(src: string, ncxPath: string, spineLookup: SpineLookup): string {
+    if (!src) return '';
+
+    const srcPath = src.split('#')[0].split('?')[0];
+    const resolvedPath = resolvePath(dirname(ncxPath), srcPath);
+    const spineIndex = spineLookup.pathToSpineIndex.get(resolvedPath);
+    const manifestHref = spineIndex !== undefined
+        ? spineLookup.spineIndexToManifestHref.get(spineIndex)
+        : undefined;
+    const baseHref = manifestHref ?? resolvedPath;
+    const hash = src.includes('#') ? `#${src.split('#').slice(1).join('#')}` : '';
+    return `${baseHref}${hash}`;
+}
+
+function getSpineIndexByNormalizedHref(href: string, spineLookup: SpineLookup): number | undefined {
+    const baseHref = href.split('#')[0].split('?')[0];
+    for (const [spineIndex, manifestHref] of spineLookup.spineIndexToManifestHref.entries()) {
+        if (manifestHref === baseHref) {
+            return spineIndex;
+        }
+    }
+    return undefined;
 }
 
 function generateSpineToc(spine: SpineItem[], spineLookup: SpineLookup): TocItem[] {

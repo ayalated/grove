@@ -15,14 +15,17 @@ export type StoredBook = {
         idref: string;
         linear?: string | null;
     }>;
-    toc: Array<{
-        id: string;
-        label: string;
-        href: string;
-    }>;
+    toc: StoredTocItem[];
     coverBlob?: Blob | null;
     isVertical?: boolean;
     createdAt: number;
+};
+
+export type StoredTocItem = {
+    id: string;
+    label: string;
+    href: string;
+    children?: StoredTocItem[];
 };
 
 export const db = await openDB('liora-reader', 3, {

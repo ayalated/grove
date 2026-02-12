@@ -1,14 +1,13 @@
 <script lang="ts">
-    export let items: Array<{
-        id: string;
-        label: string;
-        href: string;
-    }> = [];
+    import TocItemNode from './TocItemNode.svelte';
+    import type { StoredTocItem } from '../db/books';
+
+    export let items: StoredTocItem[] = [];
     export let collapsed = false;
-    export let currentIndex = 0;
+    export let activeHref = '';
 
     export let onToggle: () => void;
-    export let onSelect: (tocIndex: number) => void;
+    export let onSelect: (href: string) => void;
 </script>
 
 <div class:collapsed class="toc-panel">
@@ -17,18 +16,11 @@
     </button>
 
     {#if !collapsed && items.length > 0}
-        <ul>
-            {#each items as item, index}
-                <li>
-                    <button
-                        class:active={index === currentIndex}
-                        on:click={() => onSelect(index)}
-                    >
-                        {item.label}
-                    </button>
-                </li>
+        <div class="toc-tree">
+            {#each items as item}
+                <TocItemNode node={item} level={0} {activeHref} {onSelect} />
             {/each}
-        </ul>
+        </div>
     {/if}
 </div>
 
@@ -55,8 +47,7 @@
         margin: 8px;
     }
 
-    ul {
-        list-style: none;
+    .toc-tree {
         padding: 0 8px 12px;
         margin: 0;
         display: flex;
@@ -64,14 +55,5 @@
         gap: 8px;
         overflow-y: auto;
         max-height: calc(100% - 48px);
-    }
-
-    li button {
-        width: 100%;
-        text-align: left;
-    }
-
-    li button.active {
-        border-color: #646cff;
     }
 </style>

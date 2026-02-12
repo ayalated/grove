@@ -133,15 +133,21 @@
         return spineIndex >= 0 ? spineIndex : 0;
     }
 
-    function onSelectToc(tocIndex: number) {
+    function onSelectToc(tocHref: string) {
         if (!book) return;
 
-        const tocItem = book.toc[tocIndex];
-        if (!tocItem) return;
-
-        const spineIndex = getSpineIndexByHref(book, tocItem.href);
+        const spineIndex = getSpineIndexByHref(book, tocHref);
         const readerIndex = hasCover ? spineIndex + 1 : spineIndex;
         void loadChapter(readerIndex);
+    }
+
+    function getCurrentActiveHref(targetBook: StoredBook): string {
+        const spineIndex = hasCover ? currentIndex - 1 : currentIndex;
+        const spineItem = targetBook.spine[spineIndex];
+        if (!spineItem) return '';
+
+        const manifestItem = targetBook.manifest.find((item) => item.id === spineItem.idref);
+        return manifestItem?.href ?? '';
     }
 
     function prevChapter() {
@@ -257,7 +263,7 @@
             <TocPanel
                 items={book.toc}
                 collapsed={tocCollapsed}
-                currentIndex={hasCover ? Math.max(currentIndex - 1, 0) : currentIndex}
+                activeHref={getCurrentActiveHref(book)}
                 onToggle={() => (tocCollapsed = !tocCollapsed)}
                 onSelect={onSelectToc}
             />
