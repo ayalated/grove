@@ -231,11 +231,13 @@ async function extractNcxToc(
 
         if (!href && children.length === 0) return null;
 
-        const uniqueKey = href; // 必须包含 hash
-        if (uniqueKey && dedupe.has(uniqueKey) && children.length === 0) {
-            return null;
+        const spineIndex = href ? getSpineIndexByNormalizedHref(href, spineLookup) : undefined;
+        if (spineIndex !== undefined) {
+            if (dedupe.has(spineIndex) && children.length === 0) {
+                return null;
+            }
+            dedupe.add(spineIndex);
         }
-        if (uniqueKey) dedupe.add(uniqueKey);
 
         return {
             id: parentId,
@@ -321,7 +323,7 @@ function normalizeTocLinks(
     sourcePath: string,
     spineLookup: SpineLookup
 ): NormalizedTocItem[] {
-    const dedupe = new Set<string>();
+    const dedupe = new Set<number>();
     const tocItems: NormalizedTocItem[] = [];
 
     for (const link of links) {
@@ -368,7 +370,7 @@ function normalizeNcxHref(src: string, ncxPath: string, spineLookup: SpineLookup
     const manifestHref = spineIndex !== undefined
         ? spineLookup.spineIndexToManifestHref.get(spineIndex)
         : undefined;
-    const baseHref = manifestHref ?? '';
+    const baseHref = manifestHref ?? resolvedPath;
     const hash = src.includes('#') ? `#${src.split('#').slice(1).join('#')}` : '';
     return `${baseHref}${hash}`;
 }

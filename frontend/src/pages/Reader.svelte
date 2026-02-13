@@ -19,6 +19,9 @@
     let coverPageUrl: string | null = null;
     let hasCover = false;
     let showCoverPage = false;
+    let currentChapterPath = '';
+    let pendingFragment: string | null = null;
+    let pendingFragmentRequestId = 0;
     let chapterRenderId = 0;
     let currentIndex = 0;
     let tocCollapsed = false;
@@ -55,7 +58,7 @@
         }
     }
 
-    async function loadChapter(index: number) {
+    async function loadChapter(index: number, fragment: string | null = null) {
         if (!book || !zipArchive) return;
 
         // Virtual cover page at reader index 0 when cover exists and isn't duplicated by spine[0].
@@ -74,6 +77,9 @@
             chapterResourceUrls.push(coverPageUrl);
             showCoverPage = true;
             chapterHtml = '';
+            currentChapterPath = '';
+            pendingFragment = null;
+            pendingFragmentRequestId += 1;
             currentIndex = 0;
             chapterRenderId += 1;
             loading = false;
@@ -83,6 +89,7 @@
         const spineIndex = hasCover ? index - 1 : index;
 
         const chapterPath = getChapterPath(book, spineIndex);
+        const chapterManifestHref = getManifestHrefBySpineIndex(book, spineIndex);
         if (!chapterPath) {
             error = 'Chapter metadata is missing.';
             return;
@@ -102,6 +109,9 @@
 
             chapterHtml = await chapterFile.async('string');
             chapterBasePath = chapterPath.substring(0, chapterPath.lastIndexOf('/') + 1);
+            currentChapterPath = chapterManifestHref ?? '';
+            pendingFragment = fragment;
+            pendingFragmentRequestId += 1;
 
             coverPageUrl = null;
             showCoverPage = false;
@@ -136,9 +146,22 @@
     function onSelectToc(tocHref: string) {
         if (!book) return;
 
+        const { fileHref, fragment } = parseHref(tocHref);
+        const normalizedFileHref = normalizeTocFileHref(book, fileHref);
+
+        if (!showCoverPage && normalizedFileHref && normalizedFileHref === currentChapterPath) {
+            pendingFragment = fragment;
+            pendingFragmentRequestId += 1;
+            return;
+        }
+
         const spineIndex = getSpineIndexByHref(book, tocHref);
         const readerIndex = hasCover ? spineIndex + 1 : spineIndex;
-        void loadChapter(readerIndex);
+        void loadChapter(readerIndex, fragment);
+    }
+
+    function handleFragmentHandled() {
+        pendingFragment = null;
     }
 
     function getCurrentActiveHref(targetBook: StoredBook): string {
@@ -173,6 +196,36 @@
 
         const basePath = getBasePath(targetBook.opfPath);
         return resolvePath(basePath, manifestItem.href);
+    }
+
+    function getManifestHrefBySpineIndex(targetBook: StoredBook, chapterIndex: number): string | null {
+        const spineItem = targetBook.spine?.[chapterIndex];
+        if (!spineItem) return null;
+
+        const manifestItem = targetBook.manifest?.find((item) => item.id === spineItem.idref);
+        return manifestItem?.href ?? null;
+    }
+
+    function parseHref(href: string): { fileHref: string; fragment: string | null } {
+        const [fileHref, fragment] = href.split('#');
+        return {
+            fileHref: fileHref ?? '',
+            fragment: fragment ?? null
+        };
+    }
+
+    function normalizeTocFileHref(targetBook: StoredBook, fileHref: string): string {
+        if (!fileHref) return '';
+
+        const resolved = resolvePath(getBasePath(targetBook.opfPath), fileHref);
+        for (const item of targetBook.manifest) {
+            const manifestResolved = resolvePath(getBasePath(targetBook.opfPath), item.href);
+            if (manifestResolved === resolved) {
+                return item.href;
+            }
+        }
+
+        return fileHref;
     }
 
     async function loadZip(targetBook: StoredBook): Promise<JSZip> {
@@ -277,6 +330,9 @@
                 chapterRenderId={chapterRenderId}
                 showCoverPage={showCoverPage}
                 coverPageUrl={coverPageUrl}
+                pendingFragment={pendingFragment}
+                pendingFragmentRequestId={pendingFragmentRequestId}
+                onFragmentHandled={handleFragmentHandled}
                 resolveAssetUrl={resolveChapterAssetUrl}
             />
         </div>

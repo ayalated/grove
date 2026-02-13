@@ -1,16 +1,22 @@
 <script lang="ts">
+    import { tick } from 'svelte';
+
     export let loading = false;
     export let error: string | null = null;
     export let chapterHtml = '';
     export let chapterRenderId = 0;
     export let showCoverPage = false;
     export let coverPageUrl: string | null = null;
+    export let pendingFragment: string | null = null;
+    export let pendingFragmentRequestId = 0;
+    export let onFragmentHandled: () => void;
     export let resolveAssetUrl: (relativePath: string) => Promise<string | null>;
 
     let contentEl: HTMLDivElement | null = null;
     let renderedHtml = '';
     let processingToken = 0;
     let lastProcessedId = -1;
+    let lastScrolledFragmentRequestId = -1;
 
     $: if (contentEl) {
         contentEl.scrollTop = 0;
@@ -19,6 +25,11 @@
     $: if (chapterRenderId !== lastProcessedId) {
         lastProcessedId = chapterRenderId;
         void preprocessChapterHtml();
+    }
+
+    $: if (!loading && !error && pendingFragment && pendingFragmentRequestId !== lastScrolledFragmentRequestId) {
+        lastScrolledFragmentRequestId = pendingFragmentRequestId;
+        void scrollToPendingFragment();
     }
 
     async function preprocessChapterHtml() {
@@ -88,6 +99,19 @@
 
     function isAbsoluteUrl(url: string): boolean {
         return /^(data:|blob:|https?:|\/)/i.test(url);
+    }
+
+    async function scrollToPendingFragment() {
+        if (!pendingFragment) return;
+
+        await tick();
+
+        const target = document.getElementById(pendingFragment);
+        if (target) {
+            target.scrollIntoView({ block: 'start' });
+        }
+
+        onFragmentHandled();
     }
 </script>
 
