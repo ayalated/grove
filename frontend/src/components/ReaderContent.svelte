@@ -1,5 +1,5 @@
 <script lang="ts">
-    import { tick } from 'svelte';
+    import { onDestroy, tick } from 'svelte';
 
     export let loading = false;
     export let error: string | null = null;
@@ -11,25 +11,52 @@
     export let pendingFragmentRequestId = 0;
     export let onFragmentHandled: () => void;
     export let resolveAssetUrl: (relativePath: string) => Promise<string | null>;
+    export let isVertical = false;
 
     let contentEl: HTMLDivElement | null = null;
+    let articleEl: HTMLElement | null = null;
     let renderedHtml = '';
     let processingToken = 0;
     let lastProcessedId = -1;
     let lastScrolledFragmentRequestId = -1;
+    let pageIndex = 0;
+    let touchMoveCleanup: (() => void) | null = null;
 
     $: if (contentEl) {
-        contentEl.scrollTop = 0;
+        if (isVertical) {
+            contentEl.scrollTop = 0;
+            contentEl.scrollLeft = 0;
+        } else {
+            contentEl.scrollTop = 0;
+        }
     }
 
     $: if (chapterRenderId !== lastProcessedId) {
         lastProcessedId = chapterRenderId;
+        pageIndex = 0;
         void preprocessChapterHtml();
     }
 
     $: if (!loading && !error && pendingFragment && pendingFragmentRequestId !== lastScrolledFragmentRequestId) {
         lastScrolledFragmentRequestId = pendingFragmentRequestId;
         void scrollToPendingFragment();
+    }
+
+    $: if (isVertical) {
+        applyPageTransform();
+    } else if (articleEl) {
+        articleEl.style.transform = '';
+    }
+
+    $: {
+        touchMoveCleanup?.();
+        touchMoveCleanup = null;
+
+        if (contentEl) {
+            const listener = (event: TouchEvent) => handleTouchMove(event);
+            contentEl.addEventListener('touchmove', listener, { passive: false });
+            touchMoveCleanup = () => contentEl?.removeEventListener('touchmove', listener);
+        }
     }
 
     async function preprocessChapterHtml() {
@@ -95,10 +122,55 @@
         }
 
         renderedHtml = doc.body.innerHTML;
+        await tick();
+        applyPageTransform();
     }
+
+    onDestroy(() => {
+        touchMoveCleanup?.();
+    });
 
     function isAbsoluteUrl(url: string): boolean {
         return /^(data:|blob:|https?:|\/)/i.test(url);
+    }
+
+    function applyPageTransform() {
+        if (!isVertical || !contentEl || !articleEl) return;
+
+        const containerWidth = contentEl.clientWidth;
+        const safePageIndex = Math.max(0, pageIndex);
+        if (safePageIndex !== pageIndex) {
+            pageIndex = safePageIndex;
+        }
+
+        articleEl.style.transform = `translateX(${-safePageIndex * containerWidth}px)`;
+    }
+
+    function handleWheel(event: WheelEvent) {
+        if (!isVertical) return;
+
+        event.preventDefault();
+        if (event.deltaY > 0) {
+            pageIndex += 1;
+        } else if (event.deltaY < 0) {
+            pageIndex = Math.max(0, pageIndex - 1);
+        }
+
+        applyPageTransform();
+    }
+
+    function handleTouchMove(event: TouchEvent) {
+        if (!isVertical) return;
+        event.preventDefault();
+    }
+
+    function handleVerticalScrollKeys(event: KeyboardEvent) {
+        if (!isVertical) return;
+
+        const blockedKeys = new Set(['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', ' ']);
+        if (blockedKeys.has(event.key)) {
+            event.preventDefault();
+        }
     }
 
     async function scrollToPendingFragment() {
@@ -108,14 +180,27 @@
 
         const target = document.getElementById(pendingFragment);
         if (target) {
-            target.scrollIntoView({ block: 'start' });
+            if (isVertical && contentEl) {
+                const containerWidth = contentEl.clientWidth;
+                pageIndex = Math.max(0, Math.floor(target.offsetLeft / Math.max(1, containerWidth)));
+                applyPageTransform();
+            } else {
+                target.scrollIntoView({ block: 'start' });
+            }
         }
 
         onFragmentHandled();
     }
 </script>
 
-<div class="reader-content" bind:this={contentEl}>
+<svelte:window on:keydown={handleVerticalScrollKeys} />
+
+<div
+    class="reader-content"
+    class:vertical-mode={isVertical && !showCoverPage}
+    bind:this={contentEl}
+    on:wheel={handleWheel}
+>
     {#if loading}
         <p>Loading chapter...</p>
     {:else if error}
@@ -125,7 +210,7 @@
             <img src={coverPageUrl} alt="Book cover" />
         </div>
     {:else}
-        <article>{@html renderedHtml}</article>
+        <article bind:this={articleEl}>{@html renderedHtml}</article>
     {/if}
 </div>
 
@@ -141,6 +226,12 @@
         box-sizing: border-box;
         background: var(--reader-bg-color);
         color: var(--reader-text-color);
+    }
+
+    .reader-content.vertical-mode {
+        overflow: hidden;
+        height: 100%;
+        width: 100%;
     }
 
     .reader-content :global(article),

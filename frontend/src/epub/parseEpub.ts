@@ -209,7 +209,7 @@ async function extractNcxToc(
     const navMap = ncxDoc.getElementsByTagNameNS('*', 'navMap')[0];
     if (!navMap) return [];
 
-    const dedupe = new Set<number>();
+    const dedupe = new Set<string>();
     const rootNavPoints = Array.from(navMap.children).filter(
         (node): node is Element => node.localName === 'navPoint'
     );
@@ -231,7 +231,7 @@ async function extractNcxToc(
 
         if (!href && children.length === 0) return null;
 
-        const uniqueKey = href; // 必须包含 hash
+        const uniqueKey = href;
         if (uniqueKey && dedupe.has(uniqueKey) && children.length === 0) {
             return null;
         }
@@ -331,19 +331,21 @@ function normalizeTocLinks(
         const hrefWithoutHash = href.split('#')[0].split('?')[0];
         const resolvedPath = resolvePath(dirname(sourcePath), hrefWithoutHash);
         const spineIndex = spineLookup.pathToSpineIndex.get(resolvedPath);
-        if (spineIndex === undefined || dedupe.has(spineIndex)) continue;
+        if (spineIndex === undefined) continue;
 
         const manifestHref = spineLookup.spineIndexToManifestHref.get(spineIndex);
         if (!manifestHref) continue;
 
         const hash = href.includes('#') ? `#${href.split('#').slice(1).join('#')}` : '';
+        const fullHref = `${manifestHref}${hash}`;
 
-        dedupe.add(spineIndex);
+        if (dedupe.has(fullHref)) continue;
+        dedupe.add(fullHref);
         tocItems.push({
             title: link.textContent?.trim() || `Chapter ${spineIndex + 1}`,
             // Store href normalized to OPF-relative manifest href so reader-side
             // TOC->spine matching works for nav/ncx/fallback consistently.
-            href: `${manifestHref}${hash}`,
+            href: fullHref,
             spineIndex
         });
     }
