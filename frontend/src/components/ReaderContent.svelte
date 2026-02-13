@@ -18,13 +18,17 @@
     let renderedHtml = '';
     let processingToken = 0;
     let lastProcessedId = -1;
-    let lastFragmentRequestId = -1;
+    let lastScrolledFragmentRequestId = -1;
     let pageIndex = 0;
-    let pageCount = 1;
-    let resizeObserver: ResizeObserver | null = null;
+    let touchMoveCleanup: (() => void) | null = null;
 
-    $: if (!isVertical && contentEl) {
-        contentEl.scrollTop = 0;
+    $: if (contentEl) {
+        if (isVertical) {
+            contentEl.scrollTop = 0;
+            contentEl.scrollLeft = 0;
+        } else {
+            contentEl.scrollTop = 0;
+        }
     }
 
     $: if (chapterRenderId !== lastProcessedId) {
@@ -39,17 +43,21 @@
     }
 
     $: if (isVertical) {
-        clampPageIndex();
         applyPageTransform();
-    }
-
-    $: if (!isVertical && articleEl) {
+    } else if (articleEl) {
         articleEl.style.transform = '';
     }
 
-    onDestroy(() => {
-        resizeObserver?.disconnect();
-    });
+    $: {
+        touchMoveCleanup?.();
+        touchMoveCleanup = null;
+
+        if (contentEl) {
+            const listener = (event: TouchEvent) => handleTouchMove(event);
+            contentEl.addEventListener('touchmove', listener, { passive: false });
+            touchMoveCleanup = () => contentEl?.removeEventListener('touchmove', listener);
+        }
+    }
 
     async function preprocessChapterHtml() {
         const token = ++processingToken;
@@ -115,71 +123,27 @@
 
         renderedHtml = doc.body.innerHTML;
         await tick();
-        setupPaginationObserver();
-        updatePageCount();
         applyPageTransform();
     }
+
+    onDestroy(() => {
+        touchMoveCleanup?.();
+    });
 
     function isAbsoluteUrl(url: string): boolean {
         return /^(data:|blob:|https?:|\/)/i.test(url);
     }
 
-    function setupPaginationObserver() {
-        resizeObserver?.disconnect();
-        if (!contentEl || !articleEl) return;
-
-        resizeObserver = new ResizeObserver(() => {
-            updatePageCount();
-            applyPageTransform();
-        });
-        resizeObserver.observe(contentEl);
-        resizeObserver.observe(articleEl);
-    }
-
-    function updatePageCount() {
-        if (!isVertical || !contentEl || !articleEl) {
-            pageCount = 1;
-            pageIndex = 0;
-            return;
-        }
-
-        const viewportWidth = contentEl.clientWidth;
-        if (viewportWidth <= 0) {
-            pageCount = 1;
-            pageIndex = 0;
-            return;
-        }
-
-        const totalWidth = articleEl.scrollWidth;
-        pageCount = Math.max(1, Math.ceil(totalWidth / viewportWidth));
-        clampPageIndex();
-    }
-
-    function clampPageIndex() {
-        const maxPage = Math.max(0, pageCount - 1);
-        if (pageIndex < 0) pageIndex = 0;
-        if (pageIndex > maxPage) pageIndex = maxPage;
-    }
-
     function applyPageTransform() {
         if (!isVertical || !contentEl || !articleEl) return;
-        const viewportWidth = contentEl.clientWidth;
-        const pageOffset = pageIndex * viewportWidth;
-        articleEl.style.transform = `translateX(-${pageOffset}px)`;
-    }
 
-    function nextPage() {
-        if (!isVertical) return;
-        if (pageIndex >= pageCount - 1) return;
-        pageIndex += 1;
-        applyPageTransform();
-    }
+        const containerWidth = contentEl.clientWidth;
+        const safePageIndex = Math.max(0, pageIndex);
+        if (safePageIndex !== pageIndex) {
+            pageIndex = safePageIndex;
+        }
 
-    function prevPage() {
-        if (!isVertical) return;
-        if (pageIndex <= 0) return;
-        pageIndex -= 1;
-        applyPageTransform();
+        articleEl.style.transform = `translateX(${-safePageIndex * containerWidth}px)`;
     }
 
     function handleWheel(event: WheelEvent) {
@@ -187,39 +151,29 @@
 
         event.preventDefault();
         if (event.deltaY > 0) {
-            nextPage();
+            pageIndex += 1;
         } else if (event.deltaY < 0) {
-            prevPage();
+            pageIndex = Math.max(0, pageIndex - 1);
         }
+
+        applyPageTransform();
     }
 
-    function handleClick(event: MouseEvent) {
-        if (!isVertical || !contentEl) return;
-
-        const bounds = contentEl.getBoundingClientRect();
-        const clickX = event.clientX - bounds.left;
-        if (clickX > bounds.width / 2) {
-            nextPage();
-        } else {
-            prevPage();
-        }
+    function handleTouchMove(event: TouchEvent) {
+        if (!isVertical) return;
+        event.preventDefault();
     }
 
-    function handleKeydown(event: KeyboardEvent) {
+    function handleVerticalScrollKeys(event: KeyboardEvent) {
         if (!isVertical) return;
 
-        if (event.key === 'ArrowRight') {
+        const blockedKeys = new Set(['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', ' ']);
+        if (blockedKeys.has(event.key)) {
             event.preventDefault();
-            nextPage();
-        }
-
-        if (event.key === 'ArrowLeft') {
-            event.preventDefault();
-            prevPage();
         }
     }
 
-    async function jumpToPendingFragment() {
+    async function scrollToPendingFragment() {
         if (!pendingFragment) return;
 
         await tick();
@@ -231,13 +185,10 @@
 
         const target = contentEl.querySelector<HTMLElement>(`#${CSS.escape(pendingFragment)}`);
         if (target) {
-            if (isVertical) {
-                const viewportWidth = contentEl.clientWidth;
-                if (viewportWidth > 0) {
-                    pageIndex = Math.floor(target.offsetLeft / viewportWidth);
-                    clampPageIndex();
-                    applyPageTransform();
-                }
+            if (isVertical && contentEl) {
+                const containerWidth = contentEl.clientWidth;
+                pageIndex = Math.max(0, Math.floor(target.offsetLeft / Math.max(1, containerWidth)));
+                applyPageTransform();
             } else {
                 target.scrollIntoView({ block: 'start' });
             }
@@ -247,14 +198,13 @@
     }
 </script>
 
-<svelte:window on:keydown={handleKeydown} />
+<svelte:window on:keydown={handleVerticalScrollKeys} />
 
 <div
     class="reader-content"
     class:vertical-mode={isVertical && !showCoverPage}
     bind:this={contentEl}
     on:wheel={handleWheel}
-    on:click={handleClick}
 >
     {#if loading}
         <p>Loading chapter...</p>
@@ -285,7 +235,8 @@
 
     .reader-content.vertical-mode {
         overflow: hidden;
-        position: relative;
+        height: 100%;
+        width: 100%;
     }
 
     .reader-content :global(article),
