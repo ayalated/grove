@@ -1,5 +1,5 @@
 <script lang="ts">
-    import { tick } from 'svelte';
+    import { onDestroy, tick } from 'svelte';
 
     export let loading = false;
     export let error: string | null = null;
@@ -11,26 +11,45 @@
     export let pendingFragmentRequestId = 0;
     export let onFragmentHandled: () => void;
     export let resolveAssetUrl: (relativePath: string) => Promise<string | null>;
+    export let isVertical = false;
 
     let contentEl: HTMLDivElement | null = null;
+    let articleEl: HTMLElement | null = null;
     let renderedHtml = '';
     let processingToken = 0;
     let lastProcessedId = -1;
-    let lastScrolledFragmentRequestId = -1;
+    let lastFragmentRequestId = -1;
+    let pageIndex = 0;
+    let pageCount = 1;
+    let resizeObserver: ResizeObserver | null = null;
 
-    $: if (contentEl) {
+    $: if (!isVertical && contentEl) {
         contentEl.scrollTop = 0;
     }
 
     $: if (chapterRenderId !== lastProcessedId) {
         lastProcessedId = chapterRenderId;
+        pageIndex = 0;
         void preprocessChapterHtml();
     }
 
-    $: if (!loading && !error && pendingFragment && pendingFragmentRequestId !== lastScrolledFragmentRequestId) {
-        lastScrolledFragmentRequestId = pendingFragmentRequestId;
-        void scrollToPendingFragment();
+    $: if (!loading && !error && pendingFragment && pendingFragmentRequestId !== lastFragmentRequestId) {
+        lastFragmentRequestId = pendingFragmentRequestId;
+        void jumpToPendingFragment();
     }
+
+    $: if (isVertical) {
+        clampPageIndex();
+        applyPageTransform();
+    }
+
+    $: if (!isVertical && articleEl) {
+        articleEl.style.transform = '';
+    }
+
+    onDestroy(() => {
+        resizeObserver?.disconnect();
+    });
 
     async function preprocessChapterHtml() {
         const token = ++processingToken;
@@ -95,27 +114,148 @@
         }
 
         renderedHtml = doc.body.innerHTML;
+        await tick();
+        setupPaginationObserver();
+        updatePageCount();
+        applyPageTransform();
     }
 
     function isAbsoluteUrl(url: string): boolean {
         return /^(data:|blob:|https?:|\/)/i.test(url);
     }
 
-    async function scrollToPendingFragment() {
+    function setupPaginationObserver() {
+        resizeObserver?.disconnect();
+        if (!contentEl || !articleEl) return;
+
+        resizeObserver = new ResizeObserver(() => {
+            updatePageCount();
+            applyPageTransform();
+        });
+        resizeObserver.observe(contentEl);
+        resizeObserver.observe(articleEl);
+    }
+
+    function updatePageCount() {
+        if (!isVertical || !contentEl || !articleEl) {
+            pageCount = 1;
+            pageIndex = 0;
+            return;
+        }
+
+        const viewportWidth = contentEl.clientWidth;
+        if (viewportWidth <= 0) {
+            pageCount = 1;
+            pageIndex = 0;
+            return;
+        }
+
+        const totalWidth = articleEl.scrollWidth;
+        pageCount = Math.max(1, Math.ceil(totalWidth / viewportWidth));
+        clampPageIndex();
+    }
+
+    function clampPageIndex() {
+        const maxPage = Math.max(0, pageCount - 1);
+        if (pageIndex < 0) pageIndex = 0;
+        if (pageIndex > maxPage) pageIndex = maxPage;
+    }
+
+    function applyPageTransform() {
+        if (!isVertical || !contentEl || !articleEl) return;
+        const viewportWidth = contentEl.clientWidth;
+        const pageOffset = pageIndex * viewportWidth;
+        articleEl.style.transform = `translateX(-${pageOffset}px)`;
+    }
+
+    function nextPage() {
+        if (!isVertical) return;
+        if (pageIndex >= pageCount - 1) return;
+        pageIndex += 1;
+        applyPageTransform();
+    }
+
+    function prevPage() {
+        if (!isVertical) return;
+        if (pageIndex <= 0) return;
+        pageIndex -= 1;
+        applyPageTransform();
+    }
+
+    function handleWheel(event: WheelEvent) {
+        if (!isVertical) return;
+
+        event.preventDefault();
+        if (event.deltaY > 0) {
+            nextPage();
+        } else if (event.deltaY < 0) {
+            prevPage();
+        }
+    }
+
+    function handleClick(event: MouseEvent) {
+        if (!isVertical || !contentEl) return;
+
+        const bounds = contentEl.getBoundingClientRect();
+        const clickX = event.clientX - bounds.left;
+        if (clickX > bounds.width / 2) {
+            nextPage();
+        } else {
+            prevPage();
+        }
+    }
+
+    function handleKeydown(event: KeyboardEvent) {
+        if (!isVertical) return;
+
+        if (event.key === 'ArrowRight') {
+            event.preventDefault();
+            nextPage();
+        }
+
+        if (event.key === 'ArrowLeft') {
+            event.preventDefault();
+            prevPage();
+        }
+    }
+
+    async function jumpToPendingFragment() {
         if (!pendingFragment) return;
 
         await tick();
 
-        const target = document.getElementById(pendingFragment);
+        if (!contentEl) {
+            onFragmentHandled();
+            return;
+        }
+
+        const target = contentEl.querySelector<HTMLElement>(`#${CSS.escape(pendingFragment)}`);
         if (target) {
-            target.scrollIntoView({ block: 'start' });
+            if (isVertical) {
+                const viewportWidth = contentEl.clientWidth;
+                if (viewportWidth > 0) {
+                    pageIndex = Math.floor(target.offsetLeft / viewportWidth);
+                    clampPageIndex();
+                    applyPageTransform();
+                }
+            } else {
+                target.scrollIntoView({ block: 'start' });
+            }
         }
 
         onFragmentHandled();
     }
 </script>
 
-<div class="reader-content" bind:this={contentEl}>
+<svelte:window on:keydown={handleKeydown} />
+
+<div
+    class="reader-content"
+    class:vertical-mode={isVertical && !showCoverPage}
+    bind:this={contentEl}
+    on:wheel={handleWheel}
+    on:click={handleClick}
+>
     {#if loading}
         <p>Loading chapter...</p>
     {:else if error}
@@ -125,7 +265,7 @@
             <img src={coverPageUrl} alt="Book cover" />
         </div>
     {:else}
-        <article>{@html renderedHtml}</article>
+        <article bind:this={articleEl}>{@html renderedHtml}</article>
     {/if}
 </div>
 
@@ -143,10 +283,25 @@
         color: var(--reader-text-color);
     }
 
+    .reader-content.vertical-mode {
+        overflow: hidden;
+        position: relative;
+    }
+
     .reader-content :global(article),
     .reader-content :global(article *) {
         color: var(--reader-text-color) !important;
         text-align: left !important;
+    }
+
+    .reader-content.vertical-mode :global(article) {
+        writing-mode: vertical-rl;
+        height: 100%;
+        column-width: calc(100% - 32px);
+        column-gap: 0;
+        column-fill: auto;
+        overflow: hidden;
+        transition: transform 0.2s ease-out;
     }
 
     .reader-content :global(article a) {
