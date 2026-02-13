@@ -21,6 +21,8 @@
     let processingToken = 0;
     let lastProcessedId = -1;
     let lastScrolledFragmentRequestId = -1;
+    let pageIndex = 0;
+    let touchMoveCleanup: (() => void) | null = null;
 
     let pageIndex = 0;
     let pageCount = 1;
@@ -39,9 +41,43 @@
         void preprocessChapterHtml();
     }
 
-    $: if (!loading && !error && pendingFragment && pendingFragmentRequestId !== lastScrolledFragmentRequestId) {
-        lastScrolledFragmentRequestId = pendingFragmentRequestId;
-        void scrollToPendingFragment();
+    $: if (!loading && !error && pendingFragment && pendingFragmentRequestId !== lastFragmentRequestId) {
+        lastFragmentRequestId = pendingFragmentRequestId;
+        void jumpToPendingFragment();
+    }
+
+    $: if (isVertical) {
+        applyPageTransform();
+    } else if (articleEl) {
+        articleEl.style.transform = '';
+    }
+
+    $: {
+        touchMoveCleanup?.();
+        touchMoveCleanup = null;
+
+        if (contentEl) {
+            const listener = (event: TouchEvent) => handleTouchMove(event);
+            contentEl.addEventListener('touchmove', listener, { passive: false });
+            touchMoveCleanup = () => contentEl?.removeEventListener('touchmove', listener);
+        }
+    }
+
+    $: if (isVertical) {
+        applyPageTransform();
+    } else if (articleEl) {
+        articleEl.style.transform = '';
+    }
+
+    $: {
+        touchMoveCleanup?.();
+        touchMoveCleanup = null;
+
+        if (contentEl) {
+            const listener = (event: TouchEvent) => handleTouchMove(event);
+            contentEl.addEventListener('touchmove', listener, { passive: false });
+            touchMoveCleanup = () => contentEl?.removeEventListener('touchmove', listener);
+        }
     }
 
     $: {
@@ -189,6 +225,10 @@
         trackEl.style.transform = `translate3d(${-pageIndex * viewportWidth}px, 0, 0)`;
     }
 
+    onDestroy(() => {
+        touchMoveCleanup?.();
+    });
+
     function isAbsoluteUrl(url: string): boolean {
         return /^(data:|blob:|https?:|\/)/i.test(url);
     }
@@ -308,6 +348,16 @@
     .reader-content :global(article *) {
         color: var(--reader-text-color) !important;
         text-align: left !important;
+    }
+
+    .reader-content.vertical-mode :global(article) {
+        writing-mode: vertical-rl;
+        height: 100%;
+        column-width: calc(100% - 32px);
+        column-gap: 0;
+        column-fill: auto;
+        overflow: hidden;
+        transition: transform 0.2s ease-out;
     }
 
     .reader-content :global(article a) {
