@@ -37,9 +37,9 @@
         void preprocessChapterHtml();
     }
 
-    $: if (!loading && !error && pendingFragment && pendingFragmentRequestId !== lastScrolledFragmentRequestId) {
-        lastScrolledFragmentRequestId = pendingFragmentRequestId;
-        void scrollToPendingFragment();
+    $: if (!loading && !error && pendingFragment && pendingFragmentRequestId !== lastFragmentRequestId) {
+        lastFragmentRequestId = pendingFragmentRequestId;
+        void jumpToPendingFragment();
     }
 
     $: if (isVertical) {
@@ -178,7 +178,12 @@
 
         await tick();
 
-        const target = document.getElementById(pendingFragment);
+        if (!contentEl) {
+            onFragmentHandled();
+            return;
+        }
+
+        const target = contentEl.querySelector<HTMLElement>(`#${CSS.escape(pendingFragment)}`);
         if (target) {
             if (isVertical && contentEl) {
                 const containerWidth = contentEl.clientWidth;
@@ -238,6 +243,16 @@
     .reader-content :global(article *) {
         color: var(--reader-text-color) !important;
         text-align: left !important;
+    }
+
+    .reader-content.vertical-mode :global(article) {
+        writing-mode: vertical-rl;
+        height: 100%;
+        column-width: calc(100% - 32px);
+        column-gap: 0;
+        column-fill: auto;
+        overflow: hidden;
+        transition: transform 0.2s ease-out;
     }
 
     .reader-content :global(article a) {
