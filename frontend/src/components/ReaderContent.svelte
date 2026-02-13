@@ -59,6 +59,23 @@
         }
     }
 
+    $: if (isVertical) {
+        applyPageTransform();
+    } else if (articleEl) {
+        articleEl.style.transform = '';
+    }
+
+    $: {
+        touchMoveCleanup?.();
+        touchMoveCleanup = null;
+
+        if (contentEl) {
+            const listener = (event: TouchEvent) => handleTouchMove(event);
+            contentEl.addEventListener('touchmove', listener, { passive: false });
+            touchMoveCleanup = () => contentEl?.removeEventListener('touchmove', listener);
+        }
+    }
+
     async function preprocessChapterHtml() {
         const token = ++processingToken;
 

@@ -51,6 +51,7 @@ export async function parseEpub(file: File) {
     const manifest = extractManifest(opfDoc);
     const spine = extractSpine(opfDoc);
     const toc = await extractToc(zip, basePath, manifest, spine);
+    const isVertical = await detectVerticalWriting(zip, basePath, manifest, spine);
 
     return {
         id: crypto.randomUUID(),
@@ -61,8 +62,89 @@ export async function parseEpub(file: File) {
         spine,
         toc,
         coverBlob,
+        isVertical,
         createdAt: Date.now()
     };
+}
+
+
+async function detectVerticalWriting(
+    zip: JSZip,
+    basePath: string,
+    manifest: ManifestItem[],
+    spine: SpineItem[]
+): Promise<boolean> {
+    const opfFiles = zip.file(/\.opf$/i);
+    for (const opfFile of opfFiles) {
+        const opfText = await opfFile.async('string');
+        const opfDoc = new DOMParser().parseFromString(opfText, 'application/xml');
+        if (hasVerticalMetadata(opfDoc)) {
+            return true;
+        }
+    }
+
+    const cssItems = manifest.filter((item) => item.mediaType.toLowerCase() === 'text/css');
+    const verticalCssPatterns = [
+        /writing-mode\s*:\s*vertical-rl/i,
+        /writing-mode\s*:\s*vertical-lr/i,
+        /-webkit-writing-mode\s*:\s*vertical-rl/i,
+        /-webkit-writing-mode\s*:\s*tb-rl/i
+    ];
+
+    for (const cssItem of cssItems) {
+        const cssPath = resolvePath(basePath, cssItem.href);
+        const cssFile = zip.file(cssPath);
+        if (!cssFile) continue;
+
+        const cssText = await cssFile.async('string');
+        if (verticalCssPatterns.some((pattern) => pattern.test(cssText))) {
+            return true;
+        }
+    }
+
+    const firstSpineItems = spine.slice(0, 3);
+    for (const spineItem of firstSpineItems) {
+        const manifestItem = manifest.find((item) => item.id === spineItem.idref);
+        if (!manifestItem) continue;
+
+        const docPath = resolvePath(basePath, manifestItem.href);
+        const docFile = zip.file(docPath);
+        if (!docFile) continue;
+
+        const htmlText = await docFile.async('string');
+        const htmlDoc = new DOMParser().parseFromString(htmlText, 'text/html');
+
+        const styleMatch = htmlDoc.querySelector('[style*="writing-mode: vertical-rl" i]');
+        if (styleMatch) {
+            return true;
+        }
+
+        const classMatch = htmlDoc.querySelector('[class*="vertical" i]');
+        if (classMatch) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+function hasVerticalMetadata(opfDoc: Document): boolean {
+    const renditionLayoutMeta = opfDoc.querySelector('metadata > meta[property="rendition:layout"]')?.textContent?.trim().toLowerCase();
+    if (renditionLayoutMeta === 'pre-paginated') {
+        return true;
+    }
+
+    const writingModeMeta = opfDoc.querySelector('metadata > meta[property="writing-mode"]')?.textContent?.trim().toLowerCase();
+    if (writingModeMeta === 'vertical-rl') {
+        return true;
+    }
+
+    const primaryWritingModeMeta = opfDoc.querySelector('metadata > meta[name="primary-writing-mode"]')?.getAttribute('content')?.trim().toLowerCase();
+    if (primaryWritingModeMeta === 'vertical-rl') {
+        return true;
+    }
+
+    return false;
 }
 
 function findCoverHref(opfDoc: Document): string | null {
