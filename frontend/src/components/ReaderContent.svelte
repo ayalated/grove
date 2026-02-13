@@ -14,6 +14,8 @@
     export let isVertical = false;
 
     let contentEl: HTMLDivElement | null = null;
+    let viewportEl: HTMLDivElement | null = null;
+    let trackEl: HTMLDivElement | null = null;
     let articleEl: HTMLElement | null = null;
     let renderedHtml = '';
     let processingToken = 0;
@@ -22,13 +24,15 @@
     let pageIndex = 0;
     let touchMoveCleanup: (() => void) | null = null;
 
+    let pageIndex = 0;
+    let pageCount = 1;
+    let viewportWidth = 0;
+    let touchMoveCleanup: (() => void) | null = null;
+    let resizeObserver: ResizeObserver | null = null;
+
     $: if (contentEl) {
-        if (isVertical) {
-            contentEl.scrollTop = 0;
-            contentEl.scrollLeft = 0;
-        } else {
-            contentEl.scrollTop = 0;
-        }
+        contentEl.scrollTop = 0;
+        contentEl.scrollLeft = 0;
     }
 
     $: if (chapterRenderId !== lastProcessedId) {
@@ -75,6 +79,28 @@
             touchMoveCleanup = () => contentEl?.removeEventListener('touchmove', listener);
         }
     }
+
+    $: {
+        touchMoveCleanup?.();
+        touchMoveCleanup = null;
+
+        if (contentEl && isVertical) {
+            const listener = (event: TouchEvent) => handleTouchMove(event);
+            contentEl.addEventListener('touchmove', listener, { passive: false });
+            touchMoveCleanup = () => contentEl?.removeEventListener('touchmove', listener);
+        }
+    }
+
+    $: if (isVertical && !loading && !error && !showCoverPage) {
+        setupVerticalViewport();
+    } else {
+        teardownVerticalViewport();
+    }
+
+    onDestroy(() => {
+        teardownVerticalViewport();
+        touchMoveCleanup?.();
+    });
 
     async function preprocessChapterHtml() {
         const token = ++processingToken;
@@ -140,7 +166,63 @@
 
         renderedHtml = doc.body.innerHTML;
         await tick();
-        applyPageTransform();
+        recalculatePageMetrics();
+        applyTrackTransform();
+    }
+
+    function setupVerticalViewport() {
+        if (!viewportEl || !trackEl || !articleEl) return;
+
+        if (!resizeObserver) {
+            resizeObserver = new ResizeObserver(() => {
+                recalculatePageMetrics();
+                applyTrackTransform();
+            });
+        }
+
+        resizeObserver.disconnect();
+        resizeObserver.observe(viewportEl);
+        resizeObserver.observe(articleEl);
+        recalculatePageMetrics();
+        applyTrackTransform();
+    }
+
+    function teardownVerticalViewport() {
+        resizeObserver?.disconnect();
+        if (trackEl) {
+            trackEl.style.transform = '';
+        }
+        pageIndex = 0;
+        pageCount = 1;
+        viewportWidth = 0;
+    }
+
+    function recalculatePageMetrics() {
+        if (!isVertical || !viewportEl || !articleEl) {
+            pageCount = 1;
+            return;
+        }
+
+        viewportWidth = viewportEl.clientWidth;
+        if (viewportWidth <= 0) {
+            pageCount = 1;
+            return;
+        }
+
+        const contentWidth = Math.max(articleEl.scrollWidth, viewportWidth);
+        pageCount = Math.max(1, Math.ceil(contentWidth / viewportWidth));
+        clampPageIndex();
+    }
+
+    function clampPageIndex() {
+        const maxPageIndex = Math.max(0, pageCount - 1);
+        pageIndex = Math.max(0, Math.min(pageIndex, maxPageIndex));
+    }
+
+    function applyTrackTransform() {
+        if (!isVertical || !trackEl || viewportWidth <= 0) return;
+        clampPageIndex();
+        trackEl.style.transform = `translate3d(${-pageIndex * viewportWidth}px, 0, 0)`;
     }
 
     onDestroy(() => {
@@ -151,29 +233,19 @@
         return /^(data:|blob:|https?:|\/)/i.test(url);
     }
 
-    function applyPageTransform() {
-        if (!isVertical || !contentEl || !articleEl) return;
-
-        const containerWidth = contentEl.clientWidth;
-        const safePageIndex = Math.max(0, pageIndex);
-        if (safePageIndex !== pageIndex) {
-            pageIndex = safePageIndex;
-        }
-
-        articleEl.style.transform = `translateX(${-safePageIndex * containerWidth}px)`;
-    }
-
     function handleWheel(event: WheelEvent) {
         if (!isVertical) return;
 
         event.preventDefault();
+
         if (event.deltaY > 0) {
             pageIndex += 1;
         } else if (event.deltaY < 0) {
-            pageIndex = Math.max(0, pageIndex - 1);
+            pageIndex -= 1;
         }
 
-        applyPageTransform();
+        clampPageIndex();
+        applyTrackTransform();
     }
 
     function handleTouchMove(event: TouchEvent) {
@@ -195,18 +267,9 @@
 
         await tick();
 
-        if (!contentEl) {
-            onFragmentHandled();
-            return;
-        }
-
-        const target = contentEl.querySelector<HTMLElement>(`#${CSS.escape(pendingFragment)}`);
-        if (target) {
-            if (isVertical && contentEl) {
-                const containerWidth = contentEl.clientWidth;
-                pageIndex = Math.max(0, Math.floor(target.offsetLeft / Math.max(1, containerWidth)));
-                applyPageTransform();
-            } else {
+        if (!isVertical) {
+            const target = document.getElementById(pendingFragment);
+            if (target) {
                 target.scrollIntoView({ block: 'start' });
             }
         }
@@ -231,6 +294,12 @@
         <div class="cover-page">
             <img src={coverPageUrl} alt="Book cover" />
         </div>
+    {:else if isVertical}
+        <div class="reader-viewport" bind:this={viewportEl}>
+            <div class="reader-track" bind:this={trackEl}>
+                <article class="reader-page-content" bind:this={articleEl}>{@html renderedHtml}</article>
+            </div>
+        </div>
     {:else}
         <article bind:this={articleEl}>{@html renderedHtml}</article>
     {/if}
@@ -252,8 +321,27 @@
 
     .reader-content.vertical-mode {
         overflow: hidden;
-        height: 100%;
+    }
+
+    .reader-viewport {
+        position: relative;
+        overflow: hidden;
         width: 100%;
+        height: 100%;
+    }
+
+    .reader-track {
+        display: flex;
+        flex-direction: row;
+        width: max-content;
+        min-height: 100%;
+        will-change: transform;
+    }
+
+    .reader-page-content {
+        width: 100%;
+        flex-shrink: 0;
+        min-height: 100%;
     }
 
     .reader-content :global(article),
