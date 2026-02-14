@@ -30,6 +30,13 @@
     let touchMoveCleanup: (() => void) | null = null;
     let resizeObserver: ResizeObserver | null = null;
 
+    let pageIndex = 0;
+    let pageCount = 1;
+    let viewportWidth = 0;
+    let touchMoveCleanup: (() => void) | null = null;
+    let resizeObserver: ResizeObserver | null = null;
+    let anchorLogicalOffsetX: number | null = null;
+
     $: if (contentEl) {
         contentEl.scrollTop = 0;
         contentEl.scrollLeft = 0;
@@ -78,6 +85,23 @@
             contentEl.addEventListener('touchmove', listener, { passive: false });
             touchMoveCleanup = () => contentEl?.removeEventListener('touchmove', listener);
         }
+    }
+
+    $: {
+        touchMoveCleanup?.();
+        touchMoveCleanup = null;
+
+        if (contentEl && isVertical) {
+            const listener = (event: TouchEvent) => handleTouchMove(event);
+            contentEl.addEventListener('touchmove', listener, { passive: false });
+            touchMoveCleanup = () => contentEl?.removeEventListener('touchmove', listener);
+        }
+    }
+
+    $: if (isVertical && !loading && !error && !showCoverPage) {
+        setupVerticalViewport();
+    } else {
+        teardownVerticalViewport();
     }
 
     $: {
@@ -176,6 +200,10 @@
         if (!resizeObserver) {
             resizeObserver = new ResizeObserver(() => {
                 recalculatePageMetrics();
+                if (anchorLogicalOffsetX !== null && viewportWidth > 0) {
+                    pageIndex = Math.floor(anchorLogicalOffsetX / viewportWidth);
+                    clampPageIndex();
+                }
                 applyTrackTransform();
             });
         }
@@ -195,6 +223,7 @@
         pageIndex = 0;
         pageCount = 1;
         viewportWidth = 0;
+        anchorLogicalOffsetX = null;
     }
 
     function recalculatePageMetrics() {
@@ -267,11 +296,24 @@
 
         await tick();
 
-        if (!isVertical) {
-            const target = document.getElementById(pendingFragment);
-            if (target) {
-                target.scrollIntoView({ block: 'start' });
-            }
+        const target = document.getElementById(pendingFragment);
+        if (!target) {
+            onFragmentHandled();
+            return;
+        }
+
+        if (isVertical && articleEl && viewportWidth > 0) {
+            const rect = target.getBoundingClientRect();
+            const contentRect = articleEl.getBoundingClientRect();
+            const currentTranslateOffset = pageIndex * viewportWidth;
+            const offsetX = rect.left - contentRect.left + currentTranslateOffset;
+
+            anchorLogicalOffsetX = Math.max(0, offsetX);
+            pageIndex = Math.floor(anchorLogicalOffsetX / viewportWidth);
+            clampPageIndex();
+            applyTrackTransform();
+        } else if (!isVertical) {
+            target.scrollIntoView({ block: 'start' });
         }
 
         onFragmentHandled();
