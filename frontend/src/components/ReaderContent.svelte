@@ -204,6 +204,16 @@
         trackEl.style.transform = pagination.getTransform();
     }
 
+    function applyTrackTransform() {
+        if (!isVertical || !trackEl) return;
+        trackEl.style.transform = pagination.getTransform();
+    }
+
+
+    onDestroy(() => {
+        touchMoveCleanup?.();
+    });
+
     function isAbsoluteUrl(url: string): boolean {
         return /^(data:|blob:|https?:|\/)/i.test(url);
     }
@@ -380,7 +390,19 @@
         <p>{error}</p>
     {:else if showCoverPage && coverPageUrl}
         <div class="cover-page">
-            <img src={coverPageUrl} alt="Book cover" />
+            <img src={coverPageUrl} alt="Book cover"/>
+        </div>
+    {:else if isVertical}
+        <div class="reader-viewport" bind:this={viewportEl} style={`--viewport-width: ${Math.max(viewportWidth, 1)}px`}>
+            <div class="reader-track" bind:this={trackEl}>
+                <article class="reader-page-content" bind:this={articleEl}>{@html renderedHtml}</article>
+            </div>
+        </div>
+    {:else if isVertical}
+        <div class="reader-viewport" bind:this={viewportEl} style={`--viewport-width: ${Math.max(viewportWidth, 1)}px`}>
+            <div class="reader-track" bind:this={trackEl}>
+                <article class="reader-page-content" bind:this={articleEl}>{@html renderedHtml}</article>
+            </div>
         </div>
     {:else if isVertical}
         <div class="reader-viewport" bind:this={viewportEl} style={`--viewport-width: ${Math.max(viewportWidth, 1)}px`}>
@@ -443,6 +465,16 @@
     .reader-content :global(article *) {
         color: var(--reader-text-color) !important;
         text-align: left !important;
+    }
+
+    .reader-content.vertical-mode :global(article) {
+        writing-mode: vertical-rl;
+        height: 100%;
+        column-width: calc(100% - 32px);
+        column-gap: 0;
+        column-fill: auto;
+        overflow: hidden;
+        transition: transform 0.2s ease-out;
     }
 
     .reader-content :global(article a) {
