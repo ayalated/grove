@@ -26,203 +26,37 @@
     let trackEl: HTMLDivElement | null = null;
     let articleEl: HTMLElement | null = null;
     let renderedHtml = '';
+    let viewportWidth = 0;
+
     let processingToken = 0;
     let lastProcessedId = -1;
-    let lastScrolledFragmentRequestId = -1;
-    let pageIndex = 0;
-    let touchMoveCleanup: (() => void) | null = null;
-
-
-    let pageCount = 1;
-    let viewportWidth = 0;
-
+    let lastFragmentRequestId = -1;
+    let verticalEngineActive = false;
+    let measurePending = false;
     let resizeObserver: ResizeObserver | null = null;
-
-
-    let anchorLogicalOffsetX: number | null = null;
-
-
-    let layoutMeasurePending = false;
-
-
-    const pagination = createPaginationController();
-
-    let viewportWidth = 0;
     let touchMoveCleanup: (() => void) | null = null;
-    let resizeObserver: ResizeObserver | null = null;
-    let layoutMeasurePending = false;
-    let verticalViewportActive = false;
     let readingAnchor: ReadingAnchor | null = null;
 
     const pagination = createPaginationController();
 
-    $: if (contentEl) {
-        contentEl.scrollTop = 0;
-        contentEl.scrollLeft = 0;
-    }
-
     $: if (chapterRenderId !== lastProcessedId) {
         lastProcessedId = chapterRenderId;
-        pagination.setPage(0);
         readingAnchor = null;
-        syncPaginationState();
+        pagination.setPage(0);
+        syncViewportWidth();
         void preprocessChapterHtml();
     }
 
     $: if (!loading && !error && pendingFragment && pendingFragmentRequestId !== lastFragmentRequestId) {
         lastFragmentRequestId = pendingFragmentRequestId;
-        void jumpToPendingFragment();
+        void handlePendingFragment();
     }
 
-    $: if (isVertical) {
-        applyPageTransform();
-    } else if (articleEl) {
-        articleEl.style.transform = '';
-    }
-
-    $: {
-        touchMoveCleanup?.();
-        touchMoveCleanup = null;
-
-        if (contentEl) {
-            const listener = (event: TouchEvent) => handleTouchMove(event);
-            contentEl.addEventListener('touchmove', listener, {passive: false});
-            touchMoveCleanup = () => contentEl?.removeEventListener('touchmove', listener);
-        }
-    }
-
-    $: if (isVertical) {
-        applyPageTransform();
-    } else if (articleEl) {
-        articleEl.style.transform = '';
-    }
-
-    $: {
-        touchMoveCleanup?.();
-        touchMoveCleanup = null;
-
-        if (contentEl) {
-            const listener = (event: TouchEvent) => handleTouchMove(event);
-            contentEl.addEventListener('touchmove', listener, {passive: false});
-            touchMoveCleanup = () => contentEl?.removeEventListener('touchmove', listener);
-        }
-    }
-
-    $: {
-        touchMoveCleanup?.();
-        touchMoveCleanup = null;
-
-        if (contentEl && isVertical) {
-            const listener = (event: TouchEvent) => handleTouchMove(event);
-            contentEl.addEventListener('touchmove', listener, {passive: false});
-            touchMoveCleanup = () => contentEl?.removeEventListener('touchmove', listener);
-        }
-    }
-
-    $: if (isVertical && !loading && !error && !showCoverPage) {
-        setupVerticalViewport();
-    } else {
-        teardownVerticalViewport();
-    }
-
-    $: {
-        touchMoveCleanup?.();
-        touchMoveCleanup = null;
-
-        if (contentEl && isVertical) {
-            const listener = (event: TouchEvent) => handleTouchMove(event);
-            contentEl.addEventListener('touchmove', listener, {passive: false});
-            touchMoveCleanup = () => contentEl?.removeEventListener('touchmove', listener);
-        }
-    }
-
-    $: if (isVertical && !loading && !error && !showCoverPage) {
-        setupVerticalViewport();
-    } else {
-        teardownVerticalViewport();
-    }
-
-    $: {
-        touchMoveCleanup?.();
-        touchMoveCleanup = null;
-
-        if (contentEl && isVertical) {
-            const listener = (event: TouchEvent) => handleTouchMove(event);
-            contentEl.addEventListener('touchmove', listener, {passive: false});
-            touchMoveCleanup = () => contentEl?.removeEventListener('touchmove', listener);
-        }
-    }
-
-    $: if (isVertical && !loading && !error && !showCoverPage) {
-        setupVerticalViewport();
-    } else {
-        teardownVerticalViewport();
-    }
-
-    $: {
-        touchMoveCleanup?.();
-        touchMoveCleanup = null;
-
-        if (contentEl && isVertical) {
-            const listener = (event: TouchEvent) => handleTouchMove(event);
-            contentEl.addEventListener('touchmove', listener, {passive: false});
-            touchMoveCleanup = () => contentEl?.removeEventListener('touchmove', listener);
-        }
-    }
-
-    $: if (isVertical && !loading && !error && !showCoverPage) {
-        setupVerticalViewport();
-    } else {
-        teardownVerticalViewport();
-    }
+    $: syncVerticalEngine();
 
     onDestroy(() => {
-        teardownVerticalViewport();
-        touchMoveCleanup?.();
+        deactivateVerticalEngine();
     });
-
-    function syncPaginationState() {
-        viewportWidth = pagination.getState().viewportWidth;
-    }
-
-    $: {
-        syncTouchMoveListener();
-        syncVerticalViewport();
-    }
-
-    function syncTouchMoveListener() {
-        touchMoveCleanup?.();
-        touchMoveCleanup = null;
-
-        if (contentEl && isVertical) {
-            const listener = (event: TouchEvent) => handleTouchMove(event);
-            contentEl.addEventListener('touchmove', listener, { passive: false });
-            touchMoveCleanup = () => contentEl?.removeEventListener('touchmove', listener);
-        }
-    }
-
-    function syncVerticalViewport() {
-        const shouldActivate = isVertical && !loading && !error && !showCoverPage;
-        if (shouldActivate && !verticalViewportActive) {
-            setupVerticalViewport();
-            verticalViewportActive = true;
-            return;
-        }
-
-        if (!shouldActivate && verticalViewportActive) {
-            teardownVerticalViewport();
-            verticalViewportActive = false;
-        }
-    }
-
-    onDestroy(() => {
-        teardownVerticalViewport();
-        touchMoveCleanup?.();
-    });
-
-    function syncPaginationState() {
-        viewportWidth = pagination.getState().viewportWidth;
-    }
 
     async function preprocessChapterHtml() {
         const token = ++processingToken;
@@ -242,39 +76,27 @@
         for (const img of imgTags) {
             const src = img.getAttribute('src');
             if (!src) continue;
-
-            if (isAbsoluteUrl(src)) {
-                continue;
-            }
+            if (isAbsoluteUrl(src)) continue;
 
             const resolvedUrl = await resolveAssetUrl(src);
             if (!resolvedUrl) {
                 img.remove();
                 continue;
             }
-
             img.setAttribute('src', resolvedUrl);
         }
 
         const svgImageTags = Array.from(doc.querySelectorAll('image'));
         for (const svgImage of svgImageTags) {
-            const href =
-                svgImage.getAttribute('href') ||
-                svgImage.getAttribute('xlink:href');
+            const href = svgImage.getAttribute('href') || svgImage.getAttribute('xlink:href');
             if (!href) continue;
-
-            if (isAbsoluteUrl(href)) {
-                continue;
-            }
+            if (isAbsoluteUrl(href)) continue;
 
             const resolvedUrl = await resolveAssetUrl(href);
             if (!resolvedUrl) {
                 const svgContainer = svgImage.closest('svg');
-                if (svgContainer) {
-                    svgContainer.remove();
-                } else {
-                    svgImage.remove();
-                }
+                if (svgContainer) svgContainer.remove();
+                else svgImage.remove();
                 continue;
             }
 
@@ -282,124 +104,104 @@
             svgImage.setAttribute('xlink:href', resolvedUrl);
         }
 
-        if (token !== processingToken) {
+        if (token !== processingToken) return;
+
+        renderedHtml = doc.body.innerHTML;
+        await measureLayoutRestoreAnchorAndApply();
+    }
+
+    function syncVerticalEngine() {
+        const shouldActivate = isVertical && !loading && !error && !showCoverPage;
+        if (shouldActivate && !verticalEngineActive) {
+            activateVerticalEngine();
             return;
         }
 
-        renderedHtml = doc.body.innerHTML;
-        await measureLayoutAndUpdatePaging();
+        if (!shouldActivate && verticalEngineActive) {
+            deactivateVerticalEngine();
+        }
     }
 
-    function setupVerticalViewport() {
-        if (!viewportEl || !trackEl || !articleEl) return;
+    function activateVerticalEngine() {
+        if (!viewportEl || !articleEl) return;
 
         if (!resizeObserver) {
             resizeObserver = new ResizeObserver(() => {
-                void scheduleMeasureLayoutAndUpdatePaging();
+                void scheduleMeasureLayoutRestoreAnchorAndApply();
             });
         }
 
         resizeObserver.disconnect();
         resizeObserver.observe(viewportEl);
         resizeObserver.observe(articleEl);
-        void scheduleMeasureLayoutAndUpdatePaging();
+
+        touchMoveCleanup?.();
+        const touchListener = (event: TouchEvent) => event.preventDefault();
+        contentEl?.addEventListener('touchmove', touchListener, { passive: false });
+        touchMoveCleanup = () => contentEl?.removeEventListener('touchmove', touchListener);
+
+        verticalEngineActive = true;
+        void scheduleMeasureLayoutRestoreAnchorAndApply();
     }
 
-    async function scheduleMeasureLayoutAndUpdatePaging() {
-        if (layoutMeasurePending) return;
-        layoutMeasurePending = true;
+    function deactivateVerticalEngine() {
+        resizeObserver?.disconnect();
+        touchMoveCleanup?.();
+        touchMoveCleanup = null;
+
+        pagination.recalcLayout(0, 0);
+        pagination.setPage(0);
+        syncViewportWidth();
+
+        if (trackEl) trackEl.style.transform = '';
+        if (contentEl) {
+            contentEl.scrollTop = 0;
+            contentEl.scrollLeft = 0;
+        }
+
+        readingAnchor = null;
+        verticalEngineActive = false;
+    }
+
+    async function scheduleMeasureLayoutRestoreAnchorAndApply() {
+        if (measurePending) return;
+        measurePending = true;
         try {
-            await measureLayoutAndUpdatePaging();
+            await measureLayoutRestoreAnchorAndApply();
         } finally {
-            layoutMeasurePending = false;
+            measurePending = false;
         }
     }
 
-    async function measureLayoutAndUpdatePaging() {
+    async function measureLayoutRestoreAnchorAndApply() {
         await tick();
         await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
 
-        recalculatePageMetrics();
+        measureLayout();
         restoreReadingAnchor();
-        applyTrackTransform();
+        applyTransform();
     }
 
-    function teardownVerticalViewport() {
-        resizeObserver?.disconnect();
-        pagination.recalcLayout(0, 0);
-        pagination.setPage(0);
-        syncPaginationState();
-        if (trackEl) {
-            trackEl.style.transform = '';
-        }
-        readingAnchor = null;
-        verticalViewportActive = false;
-    }
-
-    function recalculatePageMetrics() {
+    function measureLayout() {
         if (!isVertical || !viewportEl || !articleEl) {
             pagination.recalcLayout(0, 0);
-            syncPaginationState();
+            syncViewportWidth();
             return;
         }
 
-        const nextViewportWidth = viewportEl.clientWidth;
-        if (nextViewportWidth <= 0) {
-            pagination.recalcLayout(0, 0);
-            syncPaginationState();
-            return;
-        }
-
-        const contentWidth = Math.max(articleEl.scrollWidth, nextViewportWidth);
-        pagination.recalcLayout(contentWidth, nextViewportWidth);
-        syncPaginationState();
+        const measuredViewportWidth = viewportEl.clientWidth;
+        const contentWidth = Math.max(articleEl.scrollWidth, measuredViewportWidth);
+        pagination.recalcLayout(contentWidth, measuredViewportWidth);
+        syncViewportWidth();
     }
 
-    function applyTrackTransform() {
+    function syncViewportWidth() {
+        viewportWidth = pagination.getState().viewportWidth;
+    }
+
+    function applyTransform() {
         if (!isVertical || !trackEl) return;
         trackEl.style.transform = pagination.getTransform();
-    }
-
-    async function measureLayoutAndUpdatePaging() {
-        await tick();
-        await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
-
-        recalculatePageMetrics();
-        if (anchorLogicalOffsetX !== null && pagination.getState().viewportWidth > 0) {
-            pagination.setPage(Math.floor(anchorLogicalOffsetX / pagination.getState().viewportWidth));
-            syncPaginationState();
-        }
-        applyTrackTransform();
-    }
-
-    function teardownVerticalViewport() {
-        resizeObserver?.disconnect();
-        pagination.recalcLayout(0, 0);
-        pagination.setPage(0);
-        syncPaginationState();
-        if (trackEl) {
-            trackEl.style.transform = '';
-        }
-        anchorLogicalOffsetX = null;
-    }
-
-    function recalculatePageMetrics() {
-        if (!isVertical || !viewportEl || !articleEl) {
-            pagination.recalcLayout(0, 0);
-            syncPaginationState();
-            return;
-        }
-
-        const nextViewportWidth = viewportEl.clientWidth;
-        if (nextViewportWidth <= 0) {
-            pagination.recalcLayout(0, 0);
-            syncPaginationState();
-            return;
-        }
-
-        const contentWidth = Math.max(articleEl.scrollWidth, nextViewportWidth);
-        pagination.recalcLayout(contentWidth, nextViewportWidth);
-        syncPaginationState();
     }
 
     function applyTrackTransform() {
@@ -420,21 +222,11 @@
         if (!isVertical) return;
 
         event.preventDefault();
+        if (event.deltaY > 0) pagination.nextPage();
+        if (event.deltaY < 0) pagination.prevPage();
 
-        if (event.deltaY > 0) {
-            pagination.nextPage();
-        } else if (event.deltaY < 0) {
-            pagination.prevPage();
-        }
-
-        syncPaginationState();
-        applyTrackTransform();
+        applyTransform();
         captureReadingAnchor();
-    }
-
-    function handleTouchMove(event: TouchEvent) {
-        if (!isVertical) return;
-        event.preventDefault();
     }
 
     function handleVerticalScrollKeys(event: KeyboardEvent) {
@@ -446,35 +238,76 @@
         }
     }
 
+    async function handlePendingFragment() {
+        if (!pendingFragment) return;
+
+        await tick();
+
+        const target = document.getElementById(pendingFragment);
+        if (!target) {
+            onFragmentHandled();
+            return;
+        }
+
+        if (!isVertical) {
+            target.scrollIntoView({ block: 'start' });
+            onFragmentHandled();
+            return;
+        }
+
+        if (!articleEl) {
+            onFragmentHandled();
+            return;
+        }
+
+        const anchorTextNode = findTextNodeInside(target) ?? findFirstTextNode(articleEl);
+        const charOffset = 0;
+
+        if (anchorTextNode) {
+            readingAnchor = {
+                spineIndex: currentSpineIndex,
+                nodePath: buildNodePath(articleEl, anchorTextNode),
+                charOffset
+            };
+        }
+
+        restoreReadingAnchor();
+        applyTransform();
+        onFragmentHandled();
+    }
+
     function captureReadingAnchor() {
-        if (!isVertical || !viewportEl || !articleEl) return;
+        if (!isVertical || !articleEl || !viewportEl) return;
 
         const viewportRect = viewportEl.getBoundingClientRect();
         const walker = document.createTreeWalker(articleEl, NodeFilter.SHOW_TEXT, {
-            acceptNode: (node) => node.textContent?.trim()
-                ? NodeFilter.FILTER_ACCEPT
-                : NodeFilter.FILTER_REJECT
+            acceptNode: (node) => (node.textContent?.trim() ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT)
         });
 
-        let current: Node | null = walker.nextNode();
-        while (current) {
-            const textNode = current as Text;
-            const nodeLength = textNode.textContent?.length ?? 0;
-            for (let offset = 0; offset < nodeLength; offset += 1) {
-                const range = document.createRange();
-                range.setStart(textNode, offset);
-                range.setEnd(textNode, Math.min(offset + 1, nodeLength));
-                const rect = range.getBoundingClientRect();
-                if (rect.width > 0 && rect.height > 0 && rect.right >= viewportRect.left && rect.left <= viewportRect.right) {
-                    readingAnchor = {
-                        spineIndex: currentSpineIndex,
-                        nodePath: buildNodePath(articleEl, textNode),
-                        charOffset: offset
-                    };
-                    return;
-                }
+        let node = walker.nextNode();
+        while (node) {
+            const textNode = node as Text;
+            const length = textNode.textContent?.length ?? 0;
+            if (length === 0) {
+                node = walker.nextNode();
+                continue;
             }
-            current = walker.nextNode();
+
+            const range = document.createRange();
+            range.setStart(textNode, 0);
+            range.setEnd(textNode, 1);
+            const rect = range.getBoundingClientRect();
+
+            if (rect.width > 0 && rect.height > 0 && rect.right >= viewportRect.left && rect.left <= viewportRect.right) {
+                readingAnchor = {
+                    spineIndex: currentSpineIndex,
+                    nodePath: buildNodePath(articleEl, textNode),
+                    charOffset: 0
+                };
+                return;
+            }
+
+            node = walker.nextNode();
         }
     }
 
@@ -485,19 +318,36 @@
         const textNode = resolveNodePath(articleEl, readingAnchor.nodePath);
         if (!textNode) return;
 
-        const maxOffset = textNode.textContent?.length ?? 0;
-        const safeOffset = Math.max(0, Math.min(readingAnchor.charOffset, maxOffset));
+        const length = textNode.textContent?.length ?? 0;
+        if (length === 0) return;
+
+        const safeOffset = Math.max(0, Math.min(readingAnchor.charOffset, length - 1));
         const range = document.createRange();
         range.setStart(textNode, safeOffset);
-        range.setEnd(textNode, Math.min(safeOffset + 1, maxOffset));
+        range.setEnd(textNode, safeOffset + 1);
 
         const markerRect = range.getBoundingClientRect();
-        const contentRect = articleEl.getBoundingClientRect();
-        const currentTranslateOffset = pagination.getState().pageIndex * pagination.getState().viewportWidth;
-        const offsetX = markerRect.left - contentRect.left + currentTranslateOffset;
+        const articleRect = articleEl.getBoundingClientRect();
+        const currentOffset = pagination.getState().pageIndex * pagination.getState().viewportWidth;
+        const absoluteOffset = markerRect.left - articleRect.left + currentOffset;
 
-        pagination.setPageByOffset(offsetX);
-        syncPaginationState();
+        pagination.setPageByOffset(absoluteOffset);
+    }
+
+    function findTextNodeInside(root: Element): Text | null {
+        const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+            acceptNode: (node) => (node.textContent?.trim() ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT)
+        });
+        const node = walker.nextNode();
+        return node instanceof Text ? node : null;
+    }
+
+    function findFirstTextNode(root: HTMLElement): Text | null {
+        const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+            acceptNode: (node) => (node.textContent?.trim() ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT)
+        });
+        const node = walker.nextNode();
+        return node instanceof Text ? node : null;
     }
 
     function buildNodePath(root: Node, target: Node): number[] {
@@ -518,41 +368,11 @@
     function resolveNodePath(root: Node, path: number[]): Text | null {
         let node: Node | null = root;
         for (const index of path) {
-            if (!node?.childNodes?.[index]) {
-                return null;
-            }
+            if (!node?.childNodes?.[index]) return null;
             node = node.childNodes[index];
         }
 
         return node instanceof Text ? node : null;
-    }
-
-    async function scrollToPendingFragment() {
-        if (!pendingFragment) return;
-
-        await tick();
-
-        const target = document.getElementById(pendingFragment);
-        if (!target) {
-            onFragmentHandled();
-            return;
-        }
-
-        if (isVertical && articleEl && pagination.getState().viewportWidth > 0) {
-            const rect = target.getBoundingClientRect();
-            const contentRect = articleEl.getBoundingClientRect();
-            const currentTranslateOffset = pagination.getState().pageIndex * pagination.getState().viewportWidth;
-            const offsetX = rect.left - contentRect.left + currentTranslateOffset;
-
-            pagination.setPageByOffset(offsetX);
-            syncPaginationState();
-            applyTrackTransform();
-            captureReadingAnchor();
-        } else if (!isVertical) {
-            target.scrollIntoView({ block: 'start' });
-        }
-
-        onFragmentHandled();
     }
 </script>
 
@@ -571,6 +391,12 @@
     {:else if showCoverPage && coverPageUrl}
         <div class="cover-page">
             <img src={coverPageUrl} alt="Book cover"/>
+        </div>
+    {:else if isVertical}
+        <div class="reader-viewport" bind:this={viewportEl} style={`--viewport-width: ${Math.max(viewportWidth, 1)}px`}>
+            <div class="reader-track" bind:this={trackEl}>
+                <article class="reader-page-content" bind:this={articleEl}>{@html renderedHtml}</article>
+            </div>
         </div>
     {:else if isVertical}
         <div class="reader-viewport" bind:this={viewportEl} style={`--viewport-width: ${Math.max(viewportWidth, 1)}px`}>
