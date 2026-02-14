@@ -37,6 +37,14 @@
     let resizeObserver: ResizeObserver | null = null;
     let anchorLogicalOffsetX: number | null = null;
 
+    let pageIndex = 0;
+    let pageCount = 1;
+    let viewportWidth = 0;
+    let touchMoveCleanup: (() => void) | null = null;
+    let resizeObserver: ResizeObserver | null = null;
+    let anchorLogicalOffsetX: number | null = null;
+    let layoutMeasurePending = false;
+
     $: if (contentEl) {
         contentEl.scrollTop = 0;
         contentEl.scrollLeft = 0;
@@ -85,6 +93,23 @@
             contentEl.addEventListener('touchmove', listener, { passive: false });
             touchMoveCleanup = () => contentEl?.removeEventListener('touchmove', listener);
         }
+    }
+
+    $: {
+        touchMoveCleanup?.();
+        touchMoveCleanup = null;
+
+        if (contentEl && isVertical) {
+            const listener = (event: TouchEvent) => handleTouchMove(event);
+            contentEl.addEventListener('touchmove', listener, { passive: false });
+            touchMoveCleanup = () => contentEl?.removeEventListener('touchmove', listener);
+        }
+    }
+
+    $: if (isVertical && !loading && !error && !showCoverPage) {
+        setupVerticalViewport();
+    } else {
+        teardownVerticalViewport();
     }
 
     $: {
@@ -189,9 +214,84 @@
         }
 
         renderedHtml = doc.body.innerHTML;
+        await measureLayoutAndUpdatePaging();
+    }
+
+    function setupVerticalViewport() {
+        if (!viewportEl || !trackEl || !articleEl) return;
+
+        if (!resizeObserver) {
+            resizeObserver = new ResizeObserver(() => {
+                void scheduleMeasureLayoutAndUpdatePaging();
+            });
+        }
+
+        resizeObserver.disconnect();
+        resizeObserver.observe(viewportEl);
+        resizeObserver.observe(articleEl);
+        void scheduleMeasureLayoutAndUpdatePaging();
+    }
+
+
+    async function scheduleMeasureLayoutAndUpdatePaging() {
+        if (layoutMeasurePending) return;
+        layoutMeasurePending = true;
+        try {
+            await measureLayoutAndUpdatePaging();
+        } finally {
+            layoutMeasurePending = false;
+        }
+    }
+
+    async function measureLayoutAndUpdatePaging() {
         await tick();
+        await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+
         recalculatePageMetrics();
+        if (anchorLogicalOffsetX !== null && viewportWidth > 0) {
+            pageIndex = Math.floor(anchorLogicalOffsetX / viewportWidth);
+            clampPageIndex();
+        }
         applyTrackTransform();
+    }
+
+    function teardownVerticalViewport() {
+        resizeObserver?.disconnect();
+        if (trackEl) {
+            trackEl.style.transform = '';
+        }
+        pageIndex = 0;
+        pageCount = 1;
+        viewportWidth = 0;
+        anchorLogicalOffsetX = null;
+    }
+
+    function recalculatePageMetrics() {
+        if (!isVertical || !viewportEl || !articleEl) {
+            pageCount = 1;
+            return;
+        }
+
+        viewportWidth = viewportEl.clientWidth;
+        if (viewportWidth <= 0) {
+            pageCount = 1;
+            return;
+        }
+
+        const contentWidth = Math.max(articleEl.scrollWidth, viewportWidth);
+        pageCount = Math.max(1, Math.ceil(contentWidth / viewportWidth));
+        clampPageIndex();
+    }
+
+    function clampPageIndex() {
+        const maxPageIndex = Math.max(0, pageCount - 1);
+        pageIndex = Math.max(0, Math.min(pageIndex, maxPageIndex));
+    }
+
+    function applyTrackTransform() {
+        if (!isVertical || !trackEl || viewportWidth <= 0) return;
+        clampPageIndex();
+        trackEl.style.transform = `translate3d(${-pageIndex * viewportWidth}px, 0, 0)`;
     }
 
     function setupVerticalViewport() {
@@ -337,7 +437,7 @@
             <img src={coverPageUrl} alt="Book cover" />
         </div>
     {:else if isVertical}
-        <div class="reader-viewport" bind:this={viewportEl}>
+        <div class="reader-viewport" bind:this={viewportEl} style={`--viewport-width: ${Math.max(viewportWidth, 1)}px`}>
             <div class="reader-track" bind:this={trackEl}>
                 <article class="reader-page-content" bind:this={articleEl}>{@html renderedHtml}</article>
             </div>
@@ -384,6 +484,13 @@
         width: 100%;
         flex-shrink: 0;
         min-height: 100%;
+    }
+
+    .reader-content.vertical-mode .reader-page-content {
+        writing-mode: vertical-rl;
+        column-width: var(--viewport-width);
+        column-gap: 0;
+        column-fill: auto;
     }
 
     .reader-content :global(article),
