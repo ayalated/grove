@@ -1,5 +1,5 @@
 <script lang="ts">
-    import { tick } from 'svelte';
+    import { onDestroy, tick } from 'svelte';
 
     export let loading = false;
     export let error: string | null = null;
@@ -11,26 +11,31 @@
     export let pendingFragmentRequestId = 0;
     export let onFragmentHandled: () => void;
     export let resolveAssetUrl: (relativePath: string) => Promise<string | null>;
+    export let isVertical = false;
 
     let contentEl: HTMLDivElement | null = null;
+    let viewportEl: HTMLDivElement | null = null;
     let renderedHtml = '';
     let processingToken = 0;
     let lastProcessedId = -1;
-    let lastScrolledFragmentRequestId = -1;
-
-    $: if (contentEl) {
-        contentEl.scrollTop = 0;
-    }
+    let lastFragmentRequestId = -1;
+    let touchMoveCleanup: (() => void) | null = null;
 
     $: if (chapterRenderId !== lastProcessedId) {
         lastProcessedId = chapterRenderId;
         void preprocessChapterHtml();
     }
 
-    $: if (!loading && !error && pendingFragment && pendingFragmentRequestId !== lastScrolledFragmentRequestId) {
-        lastScrolledFragmentRequestId = pendingFragmentRequestId;
-        void scrollToPendingFragment();
+    $: if (!loading && !error && pendingFragment && pendingFragmentRequestId !== lastFragmentRequestId) {
+        lastFragmentRequestId = pendingFragmentRequestId;
+        void handlePendingFragment();
     }
+
+    $: syncVerticalTouchBehavior();
+
+    onDestroy(() => {
+        touchMoveCleanup?.();
+    });
 
     async function preprocessChapterHtml() {
         const token = ++processingToken;
@@ -46,14 +51,12 @@
         }
 
         const doc = new DOMParser().parseFromString(chapterHtml, 'text/html');
+
         const imgTags = Array.from(doc.querySelectorAll('img[src]'));
         for (const img of imgTags) {
             const src = img.getAttribute('src');
             if (!src) continue;
-
-            if (isAbsoluteUrl(src)) {
-                continue;
-            }
+            if (isAbsoluteUrl(src)) continue;
 
             const resolvedUrl = await resolveAssetUrl(src);
             if (!resolvedUrl) {
@@ -66,23 +69,15 @@
 
         const svgImageTags = Array.from(doc.querySelectorAll('image'));
         for (const svgImage of svgImageTags) {
-            const href =
-                svgImage.getAttribute('href') ||
-                svgImage.getAttribute('xlink:href');
+            const href = svgImage.getAttribute('href') || svgImage.getAttribute('xlink:href');
             if (!href) continue;
-
-            if (isAbsoluteUrl(href)) {
-                continue;
-            }
+            if (isAbsoluteUrl(href)) continue;
 
             const resolvedUrl = await resolveAssetUrl(href);
             if (!resolvedUrl) {
                 const svgContainer = svgImage.closest('svg');
-                if (svgContainer) {
-                    svgContainer.remove();
-                } else {
-                    svgImage.remove();
-                }
+                if (svgContainer) svgContainer.remove();
+                else svgImage.remove();
                 continue;
             }
 
@@ -90,24 +85,39 @@
             svgImage.setAttribute('xlink:href', resolvedUrl);
         }
 
-        if (token !== processingToken) {
-            return;
-        }
+        if (token !== processingToken) return;
 
         renderedHtml = doc.body.innerHTML;
+        await tick();
+    }
+
+    function syncVerticalTouchBehavior() {
+        touchMoveCleanup?.();
+        touchMoveCleanup = null;
+
+        if (!isVertical || !contentEl) return;
+
+        const touchListener = (event: TouchEvent) => event.preventDefault();
+        contentEl.addEventListener('touchmove', touchListener, { passive: false });
+        touchMoveCleanup = () => contentEl?.removeEventListener('touchmove', touchListener);
+    }
+
+    function handleWheel(event: WheelEvent) {
+        if (!isVertical) return;
+        event.preventDefault();
     }
 
     function isAbsoluteUrl(url: string): boolean {
         return /^(data:|blob:|https?:|\/)/i.test(url);
     }
 
-    async function scrollToPendingFragment() {
+    async function handlePendingFragment() {
         if (!pendingFragment) return;
 
         await tick();
 
         const target = document.getElementById(pendingFragment);
-        if (target) {
+        if (target && !isVertical) {
             target.scrollIntoView({ block: 'start' });
         }
 
@@ -115,7 +125,12 @@
     }
 </script>
 
-<div class="reader-content" bind:this={contentEl}>
+<div
+    class="reader-content"
+    class:vertical-mode={isVertical && !showCoverPage}
+    bind:this={contentEl}
+    on:wheel={handleWheel}
+>
     {#if loading}
         <p>Loading chapter...</p>
     {:else if error}
@@ -123,6 +138,14 @@
     {:else if showCoverPage && coverPageUrl}
         <div class="cover-page">
             <img src={coverPageUrl} alt="Book cover" />
+        </div>
+    {:else if isVertical}
+        <div class="reader-viewport" bind:this={viewportEl}>
+            <div class="reader-track">
+                <article class="reader-page-content" style={`--viewport-width: ${Math.max(viewportEl?.clientWidth ?? 0, 1)}px`}>
+                    {@html renderedHtml}
+                </article>
+            </div>
         </div>
     {:else}
         <article>{@html renderedHtml}</article>
@@ -141,6 +164,32 @@
         box-sizing: border-box;
         background: var(--reader-bg-color);
         color: var(--reader-text-color);
+    }
+
+    .reader-content.vertical-mode {
+        overflow: hidden;
+    }
+
+    .reader-viewport {
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        position: relative;
+    }
+
+    .reader-track {
+        display: flex;
+        flex-direction: row;
+        width: max-content;
+        min-height: 100%;
+    }
+
+    .reader-page-content {
+        writing-mode: vertical-rl;
+        height: 100%;
+        column-width: var(--viewport-width);
+        column-gap: 0;
+        column-fill: auto;
     }
 
     .reader-content :global(article),
