@@ -21,6 +21,21 @@
     let processingToken = 0;
     let lastProcessedId = -1;
     let lastScrolledFragmentRequestId = -1;
+    let pageIndex = 0;
+    let touchMoveCleanup: (() => void) | null = null;
+
+    let pageIndex = 0;
+    let pageCount = 1;
+    let viewportWidth = 0;
+    let touchMoveCleanup: (() => void) | null = null;
+    let resizeObserver: ResizeObserver | null = null;
+
+    let pageIndex = 0;
+    let pageCount = 1;
+    let viewportWidth = 0;
+    let touchMoveCleanup: (() => void) | null = null;
+    let resizeObserver: ResizeObserver | null = null;
+    let anchorLogicalOffsetX: number | null = null;
 
     let pageIndex = 0;
     let pageCount = 1;
@@ -41,9 +56,77 @@
         void preprocessChapterHtml();
     }
 
-    $: if (!loading && !error && pendingFragment && pendingFragmentRequestId !== lastScrolledFragmentRequestId) {
-        lastScrolledFragmentRequestId = pendingFragmentRequestId;
-        void scrollToPendingFragment();
+    $: if (!loading && !error && pendingFragment && pendingFragmentRequestId !== lastFragmentRequestId) {
+        lastFragmentRequestId = pendingFragmentRequestId;
+        void jumpToPendingFragment();
+    }
+
+    $: if (isVertical) {
+        applyPageTransform();
+    } else if (articleEl) {
+        articleEl.style.transform = '';
+    }
+
+    $: {
+        touchMoveCleanup?.();
+        touchMoveCleanup = null;
+
+        if (contentEl) {
+            const listener = (event: TouchEvent) => handleTouchMove(event);
+            contentEl.addEventListener('touchmove', listener, { passive: false });
+            touchMoveCleanup = () => contentEl?.removeEventListener('touchmove', listener);
+        }
+    }
+
+    $: if (isVertical) {
+        applyPageTransform();
+    } else if (articleEl) {
+        articleEl.style.transform = '';
+    }
+
+    $: {
+        touchMoveCleanup?.();
+        touchMoveCleanup = null;
+
+        if (contentEl) {
+            const listener = (event: TouchEvent) => handleTouchMove(event);
+            contentEl.addEventListener('touchmove', listener, { passive: false });
+            touchMoveCleanup = () => contentEl?.removeEventListener('touchmove', listener);
+        }
+    }
+
+    $: {
+        touchMoveCleanup?.();
+        touchMoveCleanup = null;
+
+        if (contentEl && isVertical) {
+            const listener = (event: TouchEvent) => handleTouchMove(event);
+            contentEl.addEventListener('touchmove', listener, { passive: false });
+            touchMoveCleanup = () => contentEl?.removeEventListener('touchmove', listener);
+        }
+    }
+
+    $: if (isVertical && !loading && !error && !showCoverPage) {
+        setupVerticalViewport();
+    } else {
+        teardownVerticalViewport();
+    }
+
+    $: {
+        touchMoveCleanup?.();
+        touchMoveCleanup = null;
+
+        if (contentEl && isVertical) {
+            const listener = (event: TouchEvent) => handleTouchMove(event);
+            contentEl.addEventListener('touchmove', listener, { passive: false });
+            touchMoveCleanup = () => contentEl?.removeEventListener('touchmove', listener);
+        }
+    }
+
+    $: if (isVertical && !loading && !error && !showCoverPage) {
+        setupVerticalViewport();
+    } else {
+        teardownVerticalViewport();
     }
 
     $: {
@@ -211,6 +294,70 @@
         trackEl.style.transform = `translate3d(${-pageIndex * viewportWidth}px, 0, 0)`;
     }
 
+    function setupVerticalViewport() {
+        if (!viewportEl || !trackEl || !articleEl) return;
+
+        if (!resizeObserver) {
+            resizeObserver = new ResizeObserver(() => {
+                recalculatePageMetrics();
+                if (anchorLogicalOffsetX !== null && viewportWidth > 0) {
+                    pageIndex = Math.floor(anchorLogicalOffsetX / viewportWidth);
+                    clampPageIndex();
+                }
+                applyTrackTransform();
+            });
+        }
+
+        resizeObserver.disconnect();
+        resizeObserver.observe(viewportEl);
+        resizeObserver.observe(articleEl);
+        recalculatePageMetrics();
+        applyTrackTransform();
+    }
+
+    function teardownVerticalViewport() {
+        resizeObserver?.disconnect();
+        if (trackEl) {
+            trackEl.style.transform = '';
+        }
+        pageIndex = 0;
+        pageCount = 1;
+        viewportWidth = 0;
+        anchorLogicalOffsetX = null;
+    }
+
+    function recalculatePageMetrics() {
+        if (!isVertical || !viewportEl || !articleEl) {
+            pageCount = 1;
+            return;
+        }
+
+        viewportWidth = viewportEl.clientWidth;
+        if (viewportWidth <= 0) {
+            pageCount = 1;
+            return;
+        }
+
+        const contentWidth = Math.max(articleEl.scrollWidth, viewportWidth);
+        pageCount = Math.max(1, Math.ceil(contentWidth / viewportWidth));
+        clampPageIndex();
+    }
+
+    function clampPageIndex() {
+        const maxPageIndex = Math.max(0, pageCount - 1);
+        pageIndex = Math.max(0, Math.min(pageIndex, maxPageIndex));
+    }
+
+    function applyTrackTransform() {
+        if (!isVertical || !trackEl || viewportWidth <= 0) return;
+        clampPageIndex();
+        trackEl.style.transform = `translate3d(${-pageIndex * viewportWidth}px, 0, 0)`;
+    }
+
+    onDestroy(() => {
+        touchMoveCleanup?.();
+    });
+
     function isAbsoluteUrl(url: string): boolean {
         return /^(data:|blob:|https?:|\/)/i.test(url);
     }
@@ -350,6 +497,16 @@
     .reader-content :global(article *) {
         color: var(--reader-text-color) !important;
         text-align: left !important;
+    }
+
+    .reader-content.vertical-mode :global(article) {
+        writing-mode: vertical-rl;
+        height: 100%;
+        column-width: calc(100% - 32px);
+        column-gap: 0;
+        column-fill: auto;
+        overflow: hidden;
+        transition: transform 0.2s ease-out;
     }
 
     .reader-content :global(article a) {
