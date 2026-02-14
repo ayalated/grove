@@ -334,6 +334,8 @@
                 pendingFragmentRequestId={pendingFragmentRequestId}
                 onFragmentHandled={handleFragmentHandled}
                 resolveAssetUrl={resolveChapterAssetUrl}
+                isVertical={Boolean(book?.isVertical)}
+                currentSpineIndex={hasCover ? Math.max(0, currentIndex - 1) : currentIndex}
             />
         </div>
     </div>
