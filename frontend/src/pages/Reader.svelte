@@ -334,6 +334,7 @@
                 pendingFragmentRequestId={pendingFragmentRequestId}
                 onFragmentHandled={handleFragmentHandled}
                 resolveAssetUrl={resolveChapterAssetUrl}
+                isVertical={Boolean(book?.isVertical)}
             />
         </div>
     </div>
