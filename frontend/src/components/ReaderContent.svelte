@@ -1,12 +1,5 @@
 <script lang="ts">
     import { onDestroy, tick } from 'svelte';
-    import { createPaginationController } from './paginationController';
-
-    type ReadingAnchor = {
-        spineIndex: number;
-        nodePath: number[];
-        charOffset: number;
-    };
 
     export let loading = false;
     export let error: string | null = null;
@@ -19,25 +12,16 @@
     export let onFragmentHandled: () => void;
     export let resolveAssetUrl: (relativePath: string) => Promise<string | null>;
     export let isVertical = false;
-    export let currentSpineIndex = 0;
 
     let contentEl: HTMLDivElement | null = null;
     let viewportEl: HTMLDivElement | null = null;
-    let trackEl: HTMLDivElement | null = null;
-    let articleEl: HTMLElement | null = null;
     let renderedHtml = '';
     let viewportWidth = 0;
 
     let processingToken = 0;
     let lastProcessedId = -1;
     let lastFragmentRequestId = -1;
-    let verticalEngineActive = false;
-    let measurePending = false;
-    let resizeObserver: ResizeObserver | null = null;
     let touchMoveCleanup: (() => void) | null = null;
-    let readingAnchor: ReadingAnchor | null = null;
-
-    const pagination = createPaginationController();
 
     $: if (chapterRenderId !== lastProcessedId) {
         lastProcessedId = chapterRenderId;
@@ -52,10 +36,10 @@
         void handlePendingFragment();
     }
 
-    $: syncVerticalEngine();
+    $: syncVerticalTouchBehavior();
 
     onDestroy(() => {
-        deactivateVerticalEngine();
+        touchMoveCleanup?.();
     });
 
     async function preprocessChapterHtml() {
@@ -72,6 +56,7 @@
         }
 
         const doc = new DOMParser().parseFromString(chapterHtml, 'text/html');
+
         const imgTags = Array.from(doc.querySelectorAll('img[src]'));
         for (const img of imgTags) {
             const src = img.getAttribute('src');
@@ -107,60 +92,23 @@
         if (token !== processingToken) return;
 
         renderedHtml = doc.body.innerHTML;
-        await measureLayoutRestoreAnchorAndApply();
+        await tick();
     }
 
-    function syncVerticalEngine() {
-        const shouldActivate = isVertical && !loading && !error && !showCoverPage;
-        if (shouldActivate && !verticalEngineActive) {
-            activateVerticalEngine();
-            return;
-        }
-
-        if (!shouldActivate && verticalEngineActive) {
-            deactivateVerticalEngine();
-        }
-    }
-
-    function activateVerticalEngine() {
-        if (!viewportEl || !articleEl) return;
-
-        if (!resizeObserver) {
-            resizeObserver = new ResizeObserver(() => {
-                void scheduleMeasureLayoutRestoreAnchorAndApply();
-            });
-        }
-
-        resizeObserver.disconnect();
-        resizeObserver.observe(viewportEl);
-        resizeObserver.observe(articleEl);
-
-        touchMoveCleanup?.();
-        const touchListener = (event: TouchEvent) => event.preventDefault();
-        contentEl?.addEventListener('touchmove', touchListener, { passive: false });
-        touchMoveCleanup = () => contentEl?.removeEventListener('touchmove', touchListener);
-
-        verticalEngineActive = true;
-        void scheduleMeasureLayoutRestoreAnchorAndApply();
-    }
-
-    function deactivateVerticalEngine() {
-        resizeObserver?.disconnect();
+    function syncVerticalTouchBehavior() {
         touchMoveCleanup?.();
         touchMoveCleanup = null;
 
-        pagination.recalcLayout(0, 0);
-        pagination.setPage(0);
-        syncViewportWidth();
+        if (!isVertical || !contentEl) return;
 
-        if (trackEl) trackEl.style.transform = '';
-        if (contentEl) {
-            contentEl.scrollTop = 0;
-            contentEl.scrollLeft = 0;
-        }
+        const touchListener = (event: TouchEvent) => event.preventDefault();
+        contentEl.addEventListener('touchmove', touchListener, { passive: false });
+        touchMoveCleanup = () => contentEl?.removeEventListener('touchmove', touchListener);
+    }
 
-        readingAnchor = null;
-        verticalEngineActive = false;
+    function handleWheel(event: WheelEvent) {
+        if (!isVertical) return;
+        event.preventDefault();
     }
 
     async function scheduleMeasureLayoutRestoreAnchorAndApply() {
@@ -218,38 +166,13 @@
         return /^(data:|blob:|https?:|\/)/i.test(url);
     }
 
-    function handleWheel(event: WheelEvent) {
-        if (!isVertical) return;
-
-        event.preventDefault();
-        if (event.deltaY > 0) pagination.nextPage();
-        if (event.deltaY < 0) pagination.prevPage();
-
-        applyTransform();
-        captureReadingAnchor();
-    }
-
-    function handleVerticalScrollKeys(event: KeyboardEvent) {
-        if (!isVertical) return;
-
-        const blockedKeys = new Set(['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', ' ']);
-        if (blockedKeys.has(event.key)) {
-            event.preventDefault();
-        }
-    }
-
     async function handlePendingFragment() {
         if (!pendingFragment) return;
 
         await tick();
 
         const target = document.getElementById(pendingFragment);
-        if (!target) {
-            onFragmentHandled();
-            return;
-        }
-
-        if (!isVertical) {
+        if (target && !isVertical) {
             target.scrollIntoView({ block: 'start' });
             onFragmentHandled();
             return;
@@ -376,8 +299,6 @@
     }
 </script>
 
-<svelte:window on:keydown={handleVerticalScrollKeys} />
-
 <div
     class="reader-content"
     class:vertical-mode={isVertical && !showCoverPage}
@@ -410,6 +331,14 @@
                 <article class="reader-page-content" bind:this={articleEl}>{@html renderedHtml}</article>
             </div>
         </div>
+    {:else if isVertical}
+        <div class="reader-viewport" bind:this={viewportEl}>
+            <div class="reader-track">
+                <article class="reader-page-content" style={`--viewport-width: ${Math.max(viewportEl?.clientWidth ?? 0, 1)}px`}>
+                    {@html renderedHtml}
+                </article>
+            </div>
+        </div>
     {:else}
         <article bind:this={articleEl}>{@html renderedHtml}</article>
     {/if}
@@ -434,10 +363,10 @@
     }
 
     .reader-viewport {
-        position: relative;
-        overflow: hidden;
         width: 100%;
         height: 100%;
+        overflow: hidden;
+        position: relative;
     }
 
     .reader-track {
@@ -445,17 +374,11 @@
         flex-direction: row;
         width: max-content;
         min-height: 100%;
-        will-change: transform;
     }
 
     .reader-page-content {
-        width: 100%;
-        flex-shrink: 0;
-        min-height: 100%;
-    }
-
-    .reader-content.vertical-mode .reader-page-content {
         writing-mode: vertical-rl;
+        height: 100%;
         column-width: var(--viewport-width);
         column-gap: 0;
         column-fill: auto;
