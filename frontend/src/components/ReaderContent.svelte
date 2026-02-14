@@ -1,6 +1,6 @@
 <script lang="ts">
-    import { onDestroy, tick } from 'svelte';
-    import { createPaginationController } from './paginationController';
+    import {onDestroy, tick} from 'svelte';
+    import {createPaginationController} from './paginationController';
 
     export let loading = false;
     export let error: string | null = null;
@@ -25,32 +25,18 @@
     let pageIndex = 0;
     let touchMoveCleanup: (() => void) | null = null;
 
-    let pageIndex = 0;
+
     let pageCount = 1;
     let viewportWidth = 0;
-    let touchMoveCleanup: (() => void) | null = null;
+
     let resizeObserver: ResizeObserver | null = null;
 
-    let pageIndex = 0;
-    let pageCount = 1;
-    let viewportWidth = 0;
-    let touchMoveCleanup: (() => void) | null = null;
-    let resizeObserver: ResizeObserver | null = null;
+
     let anchorLogicalOffsetX: number | null = null;
 
-    let pageIndex = 0;
-    let pageCount = 1;
-    let viewportWidth = 0;
-    let touchMoveCleanup: (() => void) | null = null;
-    let resizeObserver: ResizeObserver | null = null;
-    let anchorLogicalOffsetX: number | null = null;
+
     let layoutMeasurePending = false;
 
-    let viewportWidth = 0;
-    let touchMoveCleanup: (() => void) | null = null;
-    let resizeObserver: ResizeObserver | null = null;
-    let anchorLogicalOffsetX: number | null = null;
-    let layoutMeasurePending = false;
 
     const pagination = createPaginationController();
 
@@ -83,7 +69,7 @@
 
         if (contentEl) {
             const listener = (event: TouchEvent) => handleTouchMove(event);
-            contentEl.addEventListener('touchmove', listener, { passive: false });
+            contentEl.addEventListener('touchmove', listener, {passive: false});
             touchMoveCleanup = () => contentEl?.removeEventListener('touchmove', listener);
         }
     }
@@ -100,7 +86,7 @@
 
         if (contentEl) {
             const listener = (event: TouchEvent) => handleTouchMove(event);
-            contentEl.addEventListener('touchmove', listener, { passive: false });
+            contentEl.addEventListener('touchmove', listener, {passive: false});
             touchMoveCleanup = () => contentEl?.removeEventListener('touchmove', listener);
         }
     }
@@ -111,24 +97,7 @@
 
         if (contentEl && isVertical) {
             const listener = (event: TouchEvent) => handleTouchMove(event);
-            contentEl.addEventListener('touchmove', listener, { passive: false });
-            touchMoveCleanup = () => contentEl?.removeEventListener('touchmove', listener);
-        }
-    }
-
-    $: if (isVertical && !loading && !error && !showCoverPage) {
-        setupVerticalViewport();
-    } else {
-        teardownVerticalViewport();
-    }
-
-    $: {
-        touchMoveCleanup?.();
-        touchMoveCleanup = null;
-
-        if (contentEl && isVertical) {
-            const listener = (event: TouchEvent) => handleTouchMove(event);
-            contentEl.addEventListener('touchmove', listener, { passive: false });
+            contentEl.addEventListener('touchmove', listener, {passive: false});
             touchMoveCleanup = () => contentEl?.removeEventListener('touchmove', listener);
         }
     }
@@ -145,7 +114,7 @@
 
         if (contentEl && isVertical) {
             const listener = (event: TouchEvent) => handleTouchMove(event);
-            contentEl.addEventListener('touchmove', listener, { passive: false });
+            contentEl.addEventListener('touchmove', listener, {passive: false});
             touchMoveCleanup = () => contentEl?.removeEventListener('touchmove', listener);
         }
     }
@@ -162,7 +131,24 @@
 
         if (contentEl && isVertical) {
             const listener = (event: TouchEvent) => handleTouchMove(event);
-            contentEl.addEventListener('touchmove', listener, { passive: false });
+            contentEl.addEventListener('touchmove', listener, {passive: false});
+            touchMoveCleanup = () => contentEl?.removeEventListener('touchmove', listener);
+        }
+    }
+
+    $: if (isVertical && !loading && !error && !showCoverPage) {
+        setupVerticalViewport();
+    } else {
+        teardownVerticalViewport();
+    }
+
+    $: {
+        touchMoveCleanup?.();
+        touchMoveCleanup = null;
+
+        if (contentEl && isVertical) {
+            const listener = (event: TouchEvent) => handleTouchMove(event);
+            contentEl.addEventListener('touchmove', listener, {passive: false});
             touchMoveCleanup = () => contentEl?.removeEventListener('touchmove', listener);
         }
     }
@@ -320,11 +306,6 @@
         trackEl.style.transform = pagination.getTransform();
     }
 
-    function applyTrackTransform() {
-        if (!isVertical || !trackEl || viewportWidth <= 0) return;
-        clampPageIndex();
-        trackEl.style.transform = `translate3d(${-pageIndex * viewportWidth}px, 0, 0)`;
-    }
 
     onDestroy(() => {
         touchMoveCleanup?.();
@@ -385,20 +366,20 @@
             syncPaginationState();
             applyTrackTransform();
         } else if (!isVertical) {
-            target.scrollIntoView({ block: 'start' });
+            target.scrollIntoView({block: 'start'});
         }
 
         onFragmentHandled();
     }
 </script>
 
-<svelte:window on:keydown={handleVerticalScrollKeys} />
+<svelte:window on:keydown={handleVerticalScrollKeys}/>
 
 <div
-    class="reader-content"
-    class:vertical-mode={isVertical && !showCoverPage}
-    bind:this={contentEl}
-    on:wheel={handleWheel}
+        class="reader-content"
+        class:vertical-mode={isVertical && !showCoverPage}
+        bind:this={contentEl}
+        on:wheel={handleWheel}
 >
     {#if loading}
         <p>Loading chapter...</p>
@@ -406,7 +387,7 @@
         <p>{error}</p>
     {:else if showCoverPage && coverPageUrl}
         <div class="cover-page">
-            <img src={coverPageUrl} alt="Book cover" />
+            <img src={coverPageUrl} alt="Book cover"/>
         </div>
     {:else if isVertical}
         <div class="reader-viewport" bind:this={viewportEl} style={`--viewport-width: ${Math.max(viewportWidth, 1)}px`}>
