@@ -1,5 +1,6 @@
 <script lang="ts">
     import { onDestroy, tick } from 'svelte';
+    import { createPaginationController } from './paginationController';
 
     export let loading = false;
     export let error: string | null = null;
@@ -45,6 +46,14 @@
     let anchorLogicalOffsetX: number | null = null;
     let layoutMeasurePending = false;
 
+    let viewportWidth = 0;
+    let touchMoveCleanup: (() => void) | null = null;
+    let resizeObserver: ResizeObserver | null = null;
+    let anchorLogicalOffsetX: number | null = null;
+    let layoutMeasurePending = false;
+
+    const pagination = createPaginationController();
+
     $: if (contentEl) {
         contentEl.scrollTop = 0;
         contentEl.scrollLeft = 0;
@@ -52,7 +61,8 @@
 
     $: if (chapterRenderId !== lastProcessedId) {
         lastProcessedId = chapterRenderId;
-        pageIndex = 0;
+        pagination.setPage(0);
+        syncPaginationState();
         void preprocessChapterHtml();
     }
 
@@ -146,10 +156,31 @@
         teardownVerticalViewport();
     }
 
+    $: {
+        touchMoveCleanup?.();
+        touchMoveCleanup = null;
+
+        if (contentEl && isVertical) {
+            const listener = (event: TouchEvent) => handleTouchMove(event);
+            contentEl.addEventListener('touchmove', listener, { passive: false });
+            touchMoveCleanup = () => contentEl?.removeEventListener('touchmove', listener);
+        }
+    }
+
+    $: if (isVertical && !loading && !error && !showCoverPage) {
+        setupVerticalViewport();
+    } else {
+        teardownVerticalViewport();
+    }
+
     onDestroy(() => {
         teardownVerticalViewport();
         touchMoveCleanup?.();
     });
+
+    function syncPaginationState() {
+        viewportWidth = pagination.getState().viewportWidth;
+    }
 
     async function preprocessChapterHtml() {
         const token = ++processingToken;
@@ -232,7 +263,6 @@
         void scheduleMeasureLayoutAndUpdatePaging();
     }
 
-
     async function scheduleMeasureLayoutAndUpdatePaging() {
         if (layoutMeasurePending) return;
         layoutMeasurePending = true;
@@ -248,104 +278,46 @@
         await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
 
         recalculatePageMetrics();
-        if (anchorLogicalOffsetX !== null && viewportWidth > 0) {
-            pageIndex = Math.floor(anchorLogicalOffsetX / viewportWidth);
-            clampPageIndex();
+        if (anchorLogicalOffsetX !== null && pagination.getState().viewportWidth > 0) {
+            pagination.setPage(Math.floor(anchorLogicalOffsetX / pagination.getState().viewportWidth));
+            syncPaginationState();
         }
         applyTrackTransform();
     }
 
     function teardownVerticalViewport() {
         resizeObserver?.disconnect();
+        pagination.recalcLayout(0, 0);
+        pagination.setPage(0);
+        syncPaginationState();
         if (trackEl) {
             trackEl.style.transform = '';
         }
-        pageIndex = 0;
-        pageCount = 1;
-        viewportWidth = 0;
         anchorLogicalOffsetX = null;
     }
 
     function recalculatePageMetrics() {
         if (!isVertical || !viewportEl || !articleEl) {
-            pageCount = 1;
+            pagination.recalcLayout(0, 0);
+            syncPaginationState();
             return;
         }
 
-        viewportWidth = viewportEl.clientWidth;
-        if (viewportWidth <= 0) {
-            pageCount = 1;
+        const nextViewportWidth = viewportEl.clientWidth;
+        if (nextViewportWidth <= 0) {
+            pagination.recalcLayout(0, 0);
+            syncPaginationState();
             return;
         }
 
-        const contentWidth = Math.max(articleEl.scrollWidth, viewportWidth);
-        pageCount = Math.max(1, Math.ceil(contentWidth / viewportWidth));
-        clampPageIndex();
-    }
-
-    function clampPageIndex() {
-        const maxPageIndex = Math.max(0, pageCount - 1);
-        pageIndex = Math.max(0, Math.min(pageIndex, maxPageIndex));
+        const contentWidth = Math.max(articleEl.scrollWidth, nextViewportWidth);
+        pagination.recalcLayout(contentWidth, nextViewportWidth);
+        syncPaginationState();
     }
 
     function applyTrackTransform() {
-        if (!isVertical || !trackEl || viewportWidth <= 0) return;
-        clampPageIndex();
-        trackEl.style.transform = `translate3d(${-pageIndex * viewportWidth}px, 0, 0)`;
-    }
-
-    function setupVerticalViewport() {
-        if (!viewportEl || !trackEl || !articleEl) return;
-
-        if (!resizeObserver) {
-            resizeObserver = new ResizeObserver(() => {
-                recalculatePageMetrics();
-                if (anchorLogicalOffsetX !== null && viewportWidth > 0) {
-                    pageIndex = Math.floor(anchorLogicalOffsetX / viewportWidth);
-                    clampPageIndex();
-                }
-                applyTrackTransform();
-            });
-        }
-
-        resizeObserver.disconnect();
-        resizeObserver.observe(viewportEl);
-        resizeObserver.observe(articleEl);
-        recalculatePageMetrics();
-        applyTrackTransform();
-    }
-
-    function teardownVerticalViewport() {
-        resizeObserver?.disconnect();
-        if (trackEl) {
-            trackEl.style.transform = '';
-        }
-        pageIndex = 0;
-        pageCount = 1;
-        viewportWidth = 0;
-        anchorLogicalOffsetX = null;
-    }
-
-    function recalculatePageMetrics() {
-        if (!isVertical || !viewportEl || !articleEl) {
-            pageCount = 1;
-            return;
-        }
-
-        viewportWidth = viewportEl.clientWidth;
-        if (viewportWidth <= 0) {
-            pageCount = 1;
-            return;
-        }
-
-        const contentWidth = Math.max(articleEl.scrollWidth, viewportWidth);
-        pageCount = Math.max(1, Math.ceil(contentWidth / viewportWidth));
-        clampPageIndex();
-    }
-
-    function clampPageIndex() {
-        const maxPageIndex = Math.max(0, pageCount - 1);
-        pageIndex = Math.max(0, Math.min(pageIndex, maxPageIndex));
+        if (!isVertical || !trackEl) return;
+        trackEl.style.transform = pagination.getTransform();
     }
 
     function applyTrackTransform() {
@@ -368,12 +340,12 @@
         event.preventDefault();
 
         if (event.deltaY > 0) {
-            pageIndex += 1;
+            pagination.nextPage();
         } else if (event.deltaY < 0) {
-            pageIndex -= 1;
+            pagination.prevPage();
         }
 
-        clampPageIndex();
+        syncPaginationState();
         applyTrackTransform();
     }
 
@@ -402,15 +374,15 @@
             return;
         }
 
-        if (isVertical && articleEl && viewportWidth > 0) {
+        if (isVertical && articleEl && pagination.getState().viewportWidth > 0) {
             const rect = target.getBoundingClientRect();
             const contentRect = articleEl.getBoundingClientRect();
-            const currentTranslateOffset = pageIndex * viewportWidth;
+            const currentTranslateOffset = pagination.getState().pageIndex * pagination.getState().viewportWidth;
             const offsetX = rect.left - contentRect.left + currentTranslateOffset;
 
             anchorLogicalOffsetX = Math.max(0, offsetX);
-            pageIndex = Math.floor(anchorLogicalOffsetX / viewportWidth);
-            clampPageIndex();
+            pagination.setPage(Math.floor(anchorLogicalOffsetX / pagination.getState().viewportWidth));
+            syncPaginationState();
             applyTrackTransform();
         } else if (!isVertical) {
             target.scrollIntoView({ block: 'start' });
