@@ -111,52 +111,6 @@
         event.preventDefault();
     }
 
-    async function scheduleMeasureLayoutRestoreAnchorAndApply() {
-        if (measurePending) return;
-        measurePending = true;
-        try {
-            await measureLayoutRestoreAnchorAndApply();
-        } finally {
-            measurePending = false;
-        }
-    }
-
-    async function measureLayoutRestoreAnchorAndApply() {
-        await tick();
-        await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
-
-        measureLayout();
-        restoreReadingAnchor();
-        applyTransform();
-    }
-
-    function measureLayout() {
-        if (!isVertical || !viewportEl || !articleEl) {
-            pagination.recalcLayout(0, 0);
-            syncViewportWidth();
-            return;
-        }
-
-        const measuredViewportWidth = viewportEl.clientWidth;
-        const contentWidth = Math.max(articleEl.scrollWidth, measuredViewportWidth);
-        pagination.recalcLayout(contentWidth, measuredViewportWidth);
-        syncViewportWidth();
-    }
-
-    function syncViewportWidth() {
-        viewportWidth = pagination.getState().viewportWidth;
-    }
-
-    function applyTransform() {
-        if (!isVertical || !trackEl) return;
-        trackEl.style.transform = pagination.getTransform();
-    }
-
-    function applyTrackTransform() {
-        if (!isVertical || !trackEl) return;
-        trackEl.style.transform = pagination.getTransform();
-    }
-
 
     onDestroy(() => {
         touchMoveCleanup?.();
@@ -329,6 +283,14 @@
         <div class="reader-viewport" bind:this={viewportEl} style={`--viewport-width: ${Math.max(viewportWidth, 1)}px`}>
             <div class="reader-track" bind:this={trackEl}>
                 <article class="reader-page-content" bind:this={articleEl}>{@html renderedHtml}</article>
+            </div>
+        </div>
+    {:else if isVertical}
+        <div class="reader-viewport" bind:this={viewportEl}>
+            <div class="reader-track">
+                <article class="reader-page-content" style={`--viewport-width: ${Math.max(viewportEl?.clientWidth ?? 0, 1)}px`}>
+                    {@html renderedHtml}
+                </article>
             </div>
         </div>
     {:else if isVertical}

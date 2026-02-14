@@ -6,16 +6,16 @@
     let currentPage: 'shelf' | 'reader' = 'shelf';
     let currentBookId: string | null = null;
 
-    onMount(() => {
-        const bookId = getBookIdFromPath();
-        if (!bookId) return;
+    initializeRoute();
 
-        currentBookId = bookId;
-        currentPage = 'reader';
+    onMount(() => {
+        const onPopState = () => initializeRoute();
+        window.addEventListener('popstate', onPopState);
+        return () => window.removeEventListener('popstate', onPopState);
     });
 
     function openBook(bookId: string) {
-        const targetUrl = `${window.location.origin}/reader/${bookId}`;
+        const targetUrl = `/reader/${encodeURIComponent(bookId)}`;
         window.open(targetUrl, '_blank', 'noopener');
     }
 
@@ -25,8 +25,22 @@
         history.replaceState(null, '', '/');
     }
 
-    function getBookIdFromPath(): string | null {
-        const match = window.location.pathname.match(/^\/reader\/([^/]+)$/);
+    function initializeRoute() {
+        if (typeof window === 'undefined') return;
+
+        const bookId = getBookIdFromPath(window.location.pathname);
+        if (bookId) {
+            currentBookId = bookId;
+            currentPage = 'reader';
+            return;
+        }
+
+        currentBookId = null;
+        currentPage = 'shelf';
+    }
+
+    function getBookIdFromPath(pathname: string): string | null {
+        const match = pathname.match(/^\/reader\/([^/?#]+)\/?$/);
         if (!match) return null;
 
         return decodeURIComponent(match[1]);
