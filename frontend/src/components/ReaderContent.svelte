@@ -1,6 +1,6 @@
 <script lang="ts">
-    import { onDestroy, tick } from 'svelte';
-    import { createPaginationController } from './paginationController';
+    import {onDestroy, tick} from 'svelte';
+    import {createPaginationController} from './paginationController';
 
     export let loading = false;
     export let error: string | null = null;
@@ -37,15 +37,6 @@
 
     let layoutMeasurePending = false;
 
-
-    const pagination = createPaginationController();
-
-    let viewportWidth = 0;
-    let touchMoveCleanup: (() => void) | null = null;
-    let resizeObserver: ResizeObserver | null = null;
-    let anchorLogicalOffsetX: number | null = null;
-    let layoutMeasurePending = false;
-    let verticalViewportActive = false;
 
     const pagination = createPaginationController();
 
@@ -177,46 +168,6 @@
         viewportWidth = pagination.getState().viewportWidth;
     }
 
-    $: {
-        syncTouchMoveListener();
-        syncVerticalViewport();
-    }
-
-
-    function syncTouchMoveListener() {
-        touchMoveCleanup?.();
-        touchMoveCleanup = null;
-
-        if (contentEl && isVertical) {
-            const listener = (event: TouchEvent) => handleTouchMove(event);
-            contentEl.addEventListener('touchmove', listener, { passive: false });
-            touchMoveCleanup = () => contentEl?.removeEventListener('touchmove', listener);
-        }
-    }
-
-    function syncVerticalViewport() {
-        const shouldActivate = isVertical && !loading && !error && !showCoverPage;
-        if (shouldActivate && !verticalViewportActive) {
-            setupVerticalViewport();
-            verticalViewportActive = true;
-            return;
-        }
-
-        if (!shouldActivate && verticalViewportActive) {
-            teardownVerticalViewport();
-            verticalViewportActive = false;
-        }
-    }
-
-    onDestroy(() => {
-        teardownVerticalViewport();
-        touchMoveCleanup?.();
-    });
-
-    function syncPaginationState() {
-        viewportWidth = pagination.getState().viewportWidth;
-    }
-
     async function preprocessChapterHtml() {
         const token = ++processingToken;
 
@@ -306,54 +257,6 @@
         } finally {
             layoutMeasurePending = false;
         }
-    }
-
-    async function measureLayoutAndUpdatePaging() {
-        await tick();
-        await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
-
-        recalculatePageMetrics();
-        if (anchorLogicalOffsetX !== null && pagination.getState().viewportWidth > 0) {
-            pagination.setPageByOffset(anchorLogicalOffsetX);
-            syncPaginationState();
-        }
-        applyTrackTransform();
-    }
-
-    function teardownVerticalViewport() {
-        resizeObserver?.disconnect();
-        pagination.recalcLayout(0, 0);
-        pagination.setPage(0);
-        syncPaginationState();
-        if (trackEl) {
-            trackEl.style.transform = '';
-        }
-        anchorLogicalOffsetX = null;
-        verticalViewportActive = false;
-    }
-
-    function recalculatePageMetrics() {
-        if (!isVertical || !viewportEl || !articleEl) {
-            pagination.recalcLayout(0, 0);
-            syncPaginationState();
-            return;
-        }
-
-        const nextViewportWidth = viewportEl.clientWidth;
-        if (nextViewportWidth <= 0) {
-            pagination.recalcLayout(0, 0);
-            syncPaginationState();
-            return;
-        }
-
-        const contentWidth = Math.max(articleEl.scrollWidth, nextViewportWidth);
-        pagination.recalcLayout(contentWidth, nextViewportWidth);
-        syncPaginationState();
-    }
-
-    function applyTrackTransform() {
-        if (!isVertical || !trackEl) return;
-        trackEl.style.transform = pagination.getTransform();
     }
 
     async function measureLayoutAndUpdatePaging() {
@@ -459,24 +362,24 @@
             const offsetX = rect.left - contentRect.left + currentTranslateOffset;
 
             anchorLogicalOffsetX = Math.max(0, offsetX);
-            pagination.setPageByOffset(anchorLogicalOffsetX);
+            pagination.setPage(Math.floor(anchorLogicalOffsetX / pagination.getState().viewportWidth));
             syncPaginationState();
             applyTrackTransform();
         } else if (!isVertical) {
-            target.scrollIntoView({ block: 'start' });
+            target.scrollIntoView({block: 'start'});
         }
 
         onFragmentHandled();
     }
 </script>
 
-<svelte:window on:keydown={handleVerticalScrollKeys} />
+<svelte:window on:keydown={handleVerticalScrollKeys}/>
 
 <div
-    class="reader-content"
-    class:vertical-mode={isVertical && !showCoverPage}
-    bind:this={contentEl}
-    on:wheel={handleWheel}
+        class="reader-content"
+        class:vertical-mode={isVertical && !showCoverPage}
+        bind:this={contentEl}
+        on:wheel={handleWheel}
 >
     {#if loading}
         <p>Loading chapter...</p>
@@ -485,12 +388,6 @@
     {:else if showCoverPage && coverPageUrl}
         <div class="cover-page">
             <img src={coverPageUrl} alt="Book cover"/>
-        </div>
-    {:else if isVertical}
-        <div class="reader-viewport" bind:this={viewportEl} style={`--viewport-width: ${Math.max(viewportWidth, 1)}px`}>
-            <div class="reader-track" bind:this={trackEl}>
-                <article class="reader-page-content" bind:this={articleEl}>{@html renderedHtml}</article>
-            </div>
         </div>
     {:else if isVertical}
         <div class="reader-viewport" bind:this={viewportEl} style={`--viewport-width: ${Math.max(viewportWidth, 1)}px`}>

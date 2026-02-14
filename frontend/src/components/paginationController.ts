@@ -9,7 +9,6 @@ export type PaginationController = {
     nextPage: () => PaginationState;
     prevPage: () => PaginationState;
     setPage: (index: number) => PaginationState;
-    setPageByOffset: (offsetX: number) => PaginationState;
     recalcLayout: (contentWidth: number, viewportWidth: number) => PaginationState;
     getTransform: () => string;
 };
@@ -40,13 +39,6 @@ export function createPaginationController(): PaginationController {
         nextPage: () => sync({ pageIndex: state.pageIndex + 1 }),
         prevPage: () => sync({ pageIndex: state.pageIndex - 1 }),
         setPage: (index: number) => sync({ pageIndex: index }),
-        setPageByOffset: (offsetX: number) => {
-            const safeOffset = Math.max(0, offsetX);
-            const index = state.viewportWidth > 0
-                ? Math.floor(safeOffset / state.viewportWidth)
-                : 0;
-            return sync({ pageIndex: index });
-        },
         recalcLayout: (contentWidth: number, viewportWidth: number) => {
             if (viewportWidth <= 0) {
                 return sync({ viewportWidth: 0, pageCount: 1, pageIndex: 0 });
