@@ -1,5 +1,6 @@
 <script lang="ts">
-    import { tick } from 'svelte';
+    import { onDestroy, tick } from 'svelte';
+    import { createPaginationController } from './paginationController';
 
     export let loading = false;
     export let error: string | null = null;
@@ -11,25 +12,66 @@
     export let pendingFragmentRequestId = 0;
     export let onFragmentHandled: () => void;
     export let resolveAssetUrl: (relativePath: string) => Promise<string | null>;
+    export let isVertical = false;
 
     let contentEl: HTMLDivElement | null = null;
+    let viewportEl: HTMLDivElement | null = null;
+    let trackEl: HTMLDivElement | null = null;
+    let articleEl: HTMLElement | null = null;
     let renderedHtml = '';
     let processingToken = 0;
     let lastProcessedId = -1;
     let lastScrolledFragmentRequestId = -1;
 
+    let viewportWidth = 0;
+    let touchMoveCleanup: (() => void) | null = null;
+    let resizeObserver: ResizeObserver | null = null;
+    let anchorLogicalOffsetX: number | null = null;
+    let layoutMeasurePending = false;
+
+    const pagination = createPaginationController();
+
     $: if (contentEl) {
         contentEl.scrollTop = 0;
+        contentEl.scrollLeft = 0;
     }
 
     $: if (chapterRenderId !== lastProcessedId) {
         lastProcessedId = chapterRenderId;
+        pagination.setPage(0);
+        syncPaginationState();
         void preprocessChapterHtml();
     }
 
     $: if (!loading && !error && pendingFragment && pendingFragmentRequestId !== lastScrolledFragmentRequestId) {
         lastScrolledFragmentRequestId = pendingFragmentRequestId;
         void scrollToPendingFragment();
+    }
+
+    $: {
+        touchMoveCleanup?.();
+        touchMoveCleanup = null;
+
+        if (contentEl && isVertical) {
+            const listener = (event: TouchEvent) => handleTouchMove(event);
+            contentEl.addEventListener('touchmove', listener, { passive: false });
+            touchMoveCleanup = () => contentEl?.removeEventListener('touchmove', listener);
+        }
+    }
+
+    $: if (isVertical && !loading && !error && !showCoverPage) {
+        setupVerticalViewport();
+    } else {
+        teardownVerticalViewport();
+    }
+
+    onDestroy(() => {
+        teardownVerticalViewport();
+        touchMoveCleanup?.();
+    });
+
+    function syncPaginationState() {
+        viewportWidth = pagination.getState().viewportWidth;
     }
 
     async function preprocessChapterHtml() {
@@ -95,10 +137,112 @@
         }
 
         renderedHtml = doc.body.innerHTML;
+        await measureLayoutAndUpdatePaging();
+    }
+
+    function setupVerticalViewport() {
+        if (!viewportEl || !trackEl || !articleEl) return;
+
+        if (!resizeObserver) {
+            resizeObserver = new ResizeObserver(() => {
+                void scheduleMeasureLayoutAndUpdatePaging();
+            });
+        }
+
+        resizeObserver.disconnect();
+        resizeObserver.observe(viewportEl);
+        resizeObserver.observe(articleEl);
+        void scheduleMeasureLayoutAndUpdatePaging();
+    }
+
+    async function scheduleMeasureLayoutAndUpdatePaging() {
+        if (layoutMeasurePending) return;
+        layoutMeasurePending = true;
+        try {
+            await measureLayoutAndUpdatePaging();
+        } finally {
+            layoutMeasurePending = false;
+        }
+    }
+
+    async function measureLayoutAndUpdatePaging() {
+        await tick();
+        await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+
+        recalculatePageMetrics();
+        if (anchorLogicalOffsetX !== null && pagination.getState().viewportWidth > 0) {
+            pagination.setPage(Math.floor(anchorLogicalOffsetX / pagination.getState().viewportWidth));
+            syncPaginationState();
+        }
+        applyTrackTransform();
+    }
+
+    function teardownVerticalViewport() {
+        resizeObserver?.disconnect();
+        pagination.recalcLayout(0, 0);
+        pagination.setPage(0);
+        syncPaginationState();
+        if (trackEl) {
+            trackEl.style.transform = '';
+        }
+        anchorLogicalOffsetX = null;
+    }
+
+    function recalculatePageMetrics() {
+        if (!isVertical || !viewportEl || !articleEl) {
+            pagination.recalcLayout(0, 0);
+            syncPaginationState();
+            return;
+        }
+
+        const nextViewportWidth = viewportEl.clientWidth;
+        if (nextViewportWidth <= 0) {
+            pagination.recalcLayout(0, 0);
+            syncPaginationState();
+            return;
+        }
+
+        const contentWidth = Math.max(articleEl.scrollWidth, nextViewportWidth);
+        pagination.recalcLayout(contentWidth, nextViewportWidth);
+        syncPaginationState();
+    }
+
+    function applyTrackTransform() {
+        if (!isVertical || !trackEl) return;
+        trackEl.style.transform = pagination.getTransform();
     }
 
     function isAbsoluteUrl(url: string): boolean {
         return /^(data:|blob:|https?:|\/)/i.test(url);
+    }
+
+    function handleWheel(event: WheelEvent) {
+        if (!isVertical) return;
+
+        event.preventDefault();
+
+        if (event.deltaY > 0) {
+            pagination.nextPage();
+        } else if (event.deltaY < 0) {
+            pagination.prevPage();
+        }
+
+        syncPaginationState();
+        applyTrackTransform();
+    }
+
+    function handleTouchMove(event: TouchEvent) {
+        if (!isVertical) return;
+        event.preventDefault();
+    }
+
+    function handleVerticalScrollKeys(event: KeyboardEvent) {
+        if (!isVertical) return;
+
+        const blockedKeys = new Set(['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', ' ']);
+        if (blockedKeys.has(event.key)) {
+            event.preventDefault();
+        }
     }
 
     async function scrollToPendingFragment() {
@@ -107,7 +251,22 @@
         await tick();
 
         const target = document.getElementById(pendingFragment);
-        if (target) {
+        if (!target) {
+            onFragmentHandled();
+            return;
+        }
+
+        if (isVertical && articleEl && pagination.getState().viewportWidth > 0) {
+            const rect = target.getBoundingClientRect();
+            const contentRect = articleEl.getBoundingClientRect();
+            const currentTranslateOffset = pagination.getState().pageIndex * pagination.getState().viewportWidth;
+            const offsetX = rect.left - contentRect.left + currentTranslateOffset;
+
+            anchorLogicalOffsetX = Math.max(0, offsetX);
+            pagination.setPage(Math.floor(anchorLogicalOffsetX / pagination.getState().viewportWidth));
+            syncPaginationState();
+            applyTrackTransform();
+        } else if (!isVertical) {
             target.scrollIntoView({ block: 'start' });
         }
 
@@ -115,7 +274,14 @@
     }
 </script>
 
-<div class="reader-content" bind:this={contentEl}>
+<svelte:window on:keydown={handleVerticalScrollKeys} />
+
+<div
+    class="reader-content"
+    class:vertical-mode={isVertical && !showCoverPage}
+    bind:this={contentEl}
+    on:wheel={handleWheel}
+>
     {#if loading}
         <p>Loading chapter...</p>
     {:else if error}
@@ -124,8 +290,14 @@
         <div class="cover-page">
             <img src={coverPageUrl} alt="Book cover" />
         </div>
+    {:else if isVertical}
+        <div class="reader-viewport" bind:this={viewportEl} style={`--viewport-width: ${Math.max(viewportWidth, 1)}px`}>
+            <div class="reader-track" bind:this={trackEl}>
+                <article class="reader-page-content" bind:this={articleEl}>{@html renderedHtml}</article>
+            </div>
+        </div>
     {:else}
-        <article>{@html renderedHtml}</article>
+        <article bind:this={articleEl}>{@html renderedHtml}</article>
     {/if}
 </div>
 
@@ -141,6 +313,38 @@
         box-sizing: border-box;
         background: var(--reader-bg-color);
         color: var(--reader-text-color);
+    }
+
+    .reader-content.vertical-mode {
+        overflow: hidden;
+    }
+
+    .reader-viewport {
+        position: relative;
+        overflow: hidden;
+        width: 100%;
+        height: 100%;
+    }
+
+    .reader-track {
+        display: flex;
+        flex-direction: row;
+        width: max-content;
+        min-height: 100%;
+        will-change: transform;
+    }
+
+    .reader-page-content {
+        width: 100%;
+        flex-shrink: 0;
+        min-height: 100%;
+    }
+
+    .reader-content.vertical-mode .reader-page-content {
+        writing-mode: vertical-rl;
+        column-width: var(--viewport-width);
+        column-gap: 0;
+        column-fill: auto;
     }
 
     .reader-content :global(article),
